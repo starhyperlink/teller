@@ -31,13 +31,16 @@ function sanitizeHistory(value: unknown[]) {
               const file = message.file;
               const sanitizedFile =
                 file && typeof file === "object"
-                  ? {
-                      name: typeof file.name === "string" ? file.name.slice(0, 200) : "attachment",
-                      type: typeof file.type === "string" ? file.type.slice(0, 120) : "application/octet-stream",
-                      size: typeof file.size === "number" ? file.size : 0,
-                      ...(typeof file.dataUrl === "string" ? { dataUrl: file.dataUrl } : {}),
-                      ...(typeof file.storagePath === "string" ? { storagePath: file.storagePath } : {}),
-                    }
+                  ? (() => {
+                      const fileRecord = file as Record<string, unknown>;
+                      return {
+                        name: typeof fileRecord.name === "string" ? fileRecord.name.slice(0, 200) : "attachment",
+                        type: typeof fileRecord.type === "string" ? fileRecord.type.slice(0, 120) : "application/octet-stream",
+                        size: typeof fileRecord.size === "number" ? fileRecord.size : 0,
+                        ...(typeof fileRecord.dataUrl === "string" ? { dataUrl: fileRecord.dataUrl } : {}),
+                        ...(typeof fileRecord.storagePath === "string" ? { storagePath: fileRecord.storagePath } : {}),
+                      };
+                    })()
                   : undefined;
               return {
                 role: message.role === "user" ? "user" : "assistant",
@@ -50,7 +53,7 @@ function sanitizeHistory(value: unknown[]) {
 }
 
 function parseDataUrl(dataUrl: string) {
-  const match = dataUrl.match(/^data:([^;,]+)?;base64,(.+)$/s);
+  const match = dataUrl.match(/^data:([^;,]+)?;base64,([\s\S]+)$/);
   if (!match) return null;
   return { contentType: match[1] || "application/octet-stream", buffer: Buffer.from(match[2], "base64") };
 }

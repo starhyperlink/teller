@@ -1,10 +1,21 @@
 "use client";
 
 import { useAuth0 } from "@auth0/auth0-react";
+import { useRouter } from "next/navigation";
 import PayPalUpgradeButton from "@/components/PayPalUpgradeButton";
 
 export default function PricingPage() {
-  const { isAuthenticated, isLoading } = useAuth0();
+  const { isAuthenticated, isLoading, loginWithRedirect } = useAuth0();
+  const router = useRouter();
+
+  async function startFreePlan() {
+    if (isAuthenticated) {
+      router.push("/chat");
+      return;
+    }
+
+    await loginWithRedirect({ appState: { returnTo: "/chat" } });
+  }
 
   return (
     <main className="min-h-screen bg-neutral-950 px-6 py-20 text-white">
@@ -22,6 +33,8 @@ export default function PricingPage() {
             price="R0"
             features={["20 messages per day", "Basic AI chat", "Chat history"]}
             button="Start Free"
+            onClick={startFreePlan}
+            disabled={isLoading}
           />
 
           <PricingCard
@@ -94,6 +107,8 @@ function PricingCard({
   button,
   highlighted,
   canUpgrade = false,
+  onClick,
+  disabled = false,
 }: {
   name: string;
   price: string;
@@ -102,6 +117,8 @@ function PricingCard({
   button: string;
   highlighted?: boolean;
   canUpgrade?: boolean;
+  onClick?: () => void;
+  disabled?: boolean;
 }) {
   return (
     <div
@@ -131,9 +148,12 @@ function PricingCard({
         </PayPalUpgradeButton>
       ) : !paypalPlan ? (
         <button
+          type="button"
+          onClick={onClick}
+          disabled={disabled}
           className={`mt-8 w-full rounded-lg px-4 py-3 font-semibold ${
             highlighted ? "bg-black text-white" : "bg-white text-black"
-          }`}
+          } disabled:cursor-not-allowed disabled:opacity-60`}
         >
           {button}
         </button>
