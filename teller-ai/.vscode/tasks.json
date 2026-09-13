@@ -1,0 +1,28 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Update Firebase dependency lockfile",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"install",
+				"firebase-admin@^13.7.0",
+				"--package-lock-only"
+			],
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Install Firebase web SDK",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"install",
+				"firebase@^12.4.0"
+			],
+			"isBackground": false,
+			"problemMatcher": []
+		}
+	]
+}

@@ -11,6 +11,7 @@ type Message = {
     type: string;
     size: number;
     dataUrl: string;
+    storagePath?: string;
   } | null;
 };
 
@@ -39,6 +40,7 @@ export default function ChatWindow() {
 
   const [histories, setHistories] = useState<HistoryItem[]>([]);
   const [activeHistoryId, setActiveHistoryId] = useState<string | null>(null);
+  const historyHydratedRef = useRef(false);
 
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -106,6 +108,7 @@ export default function ChatWindow() {
   useEffect(() => {
     if (isAuthLoading) return;
 
+    historyHydratedRef.current = false;
     try {
       setActiveHistoryId(null);
       setMessages([
@@ -119,39 +122,63 @@ export default function ChatWindow() {
       const storedUsage = Number(localStorage.getItem(usageStorageKey) || "0");
       setMonthlyChatCount(Number.isFinite(storedUsage) ? storedUsage : 0);
 
+      let localHistories: HistoryItem[] = [];
       if (raw) {
         const parsed: HistoryItem[] = JSON.parse(raw);
-        const sorted = parsed.sort((a, b) => b.updatedAt - a.updatedAt);
-        setHistories(sorted);
-        if (sorted.length) {
-          setActiveHistoryId(sorted[0].id);
-          setMessages(sorted[0].messages);
-          return;
-        }
+        localHistories = parsed.sort((a, b) => b.updatedAt - a.updatedAt);
       }
 
-      // initialize with default assistant message as a new history
-      const initialMessages: Message[] = [
-        {
-          role: "assistant",
-          content:
-            "Hi, I’m Teller AI. Ask me anything — I can help with research, writing, business, coding, summaries, and ideas.",
-        },
-      ];
-      const id = Date.now().toString();
-      const initial: HistoryItem = {
-        id,
-        title: "New chat",
-        messages: initialMessages,
-        updatedAt: Date.now(),
-      };
-      setHistories([initial]);
-      setActiveHistoryId(id);
-      setMessages(initialMessages);
-      localStorage.setItem(historyStorageKey, JSON.stringify([initial]));
+      if (localHistories.length) {
+        setHistories(localHistories);
+        setActiveHistoryId(localHistories[0].id);
+        setMessages(localHistories[0].messages);
+      } else {
+        const initialMessages: Message[] = [
+          {
+            role: "assistant",
+            content:
+              "Hi, I’m Teller AI. Ask me anything — I can help with research, writing, business, coding, summaries, and ideas.",
+          },
+        ];
+        const id = Date.now().toString();
+        const initial: HistoryItem = {
+          id,
+          title: "New chat",
+          messages: initialMessages,
+          updatedAt: Date.now(),
+        };
+        localHistories = [initial];
+        setHistories(localHistories);
+        setActiveHistoryId(id);
+        setMessages(initialMessages);
+        localStorage.setItem(historyStorageKey, JSON.stringify(localHistories));
+      }
+
+      if (!isAuthenticated) {
+        historyHydratedRef.current = true;
+        return;
+      }
+
+      getAccessTokenSilently()
+        .then((token) => fetch("/api/account/history", { headers: { Authorization: `Bearer ${token}` } }))
+        .then(async (response) => {
+          if (!response.ok) throw new Error("Could not load remote history.");
+          const data = await response.json();
+          if (!Array.isArray(data.history)) throw new Error("Invalid remote history.");
+          const remoteHistories = data.history as HistoryItem[];
+          if (remoteHistories.length) {
+            setHistories(remoteHistories);
+            setActiveHistoryId(remoteHistories[0].id);
+            setMessages(remoteHistories[0].messages);
+          }
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          historyHydratedRef.current = true;
+        });
       // eslint-disable-next-line no-empty
     } catch (e) {}
-  }, [historyStorageKey, isAuthLoading, usageStorageKey]);
+  }, [getAccessTokenSilently, historyStorageKey, isAuthLoading, isAuthenticated, usageStorageKey]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -198,6 +225,29 @@ export default function ChatWindow() {
       return next;
     });
   }, [messages, activeHistoryId, historyStorageKey]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !historyHydratedRef.current) return;
+    let cancelled = false;
+    getAccessTokenSilently()
+      .then((token) =>
+        fetch("/api/account/history", {
+          method: "PUT",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ history: histories }),
+        }),
+      )
+      .then((response) => {
+        if (!response.ok && !cancelled) throw new Error("Could not save remote history.");
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [getAccessTokenSilently, histories, isAuthenticated]);
 
   function createNewChat() {
     const id = Date.now().toString();
