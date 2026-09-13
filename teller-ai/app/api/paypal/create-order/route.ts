@@ -1,0 +1,104 @@
+import { NextResponse } from "next/server";
+
+const paypalBaseUrl =
+  process.env.PAYPAL_ENVIRONMENT === "production"
+    ? "https://api-m.paypal.com"
+    : "https://api-m.sandbox.paypal.com";
+
+const planAmounts: Record<string, string> = {
+  "pro-monthly": "180.00",
+  "business-monthly": "520.00",
+  "pro-yearly": "1200.00",
+  "business-yearly": "5800.00",
+};
+
+async function getPayPalAccessToken() {
+  const credentials = Buffer.from(
+    `${process.env.PAYPAL_CLIENT_ID}:${process.env.PAYPAL_CLIENT_SECRET}`
+  ).toString("base64");
+
+  const response = await fetch(`${paypalBaseUrl}/v1/oauth2/token`, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${credentials}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: "grant_type=client_credentials",
+  });
+
+  if (!response.ok) {
+    const details = await response.text();
+    throw new Error(`PayPal authentication failed (${response.status}): ${details}`);
+  }
+
+  const result = await response.json();
+  return result.access_token as string;
+}
+
+export async function POST(request: Request) {
+  if (!process.env.PAYPAL_CLIENT_ID || !process.env.PAYPAL_CLIENT_SECRET) {
+    return NextResponse.json(
+      { error: "PayPal is not configured." },
+      { status: 500 }
+    );
+  }
+
+  try {
+    const { plan } = await request.json();
+    const amount = planAmounts[plan];
+
+    if (!amount) {
+      return NextResponse.json({ error: "Invalid payment amount." }, { status: 400 });
+    }
+
+    const accessToken = await getPayPalAccessToken();
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL;
+    if (!appUrl) {
+      return NextResponse.json(
+        { error: "NEXT_PUBLIC_APP_URL is not configured." },
+        { status: 500 }
+      );
+    }
+    const response = await fetch(`${paypalBaseUrl}/v2/checkout/orders`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        intent: "CAPTURE",
+        purchase_units: [{ amount: { currency_code: "ZAR", value: amount } }],
+        application_context: {
+          user_action: "PAY_NOW",
+          return_url: `${appUrl}/api/paypal/capture-order`,
+          cancel_url: `${appUrl}/pricing?paypal=canceled`,
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      const details = await response.text();
+      throw new Error(`PayPal order creation failed (${response.status}): ${details}`);
+    }
+
+    const order = await response.json();
+    const approvalUrl = order.links?.find(
+      (link: { rel: string; href: string }) => link.rel === "approve"
+    )?.href;
+
+    if (!approvalUrl) {
+      throw new Error("PayPal approval link was not returned.");
+    }
+
+    return NextResponse.json({ approvalUrl });
+  } catch (error) {
+    console.error("PayPal checkout error:", error);
+    return NextResponse.json(
+      {
+        error: "Could not create PayPal checkout.",
+        detail: error instanceof Error ? error.message : "Unknown PayPal error.",
+      },
+      { status: 500 }
+    );
+  }
+}
