@@ -1,6 +1,11 @@
+"use client";
+
+import { useAuth0 } from "@auth0/auth0-react";
 import PayPalUpgradeButton from "@/components/PayPalUpgradeButton";
 
 export default function PricingPage() {
+  const { isAuthenticated, isLoading } = useAuth0();
+
   return (
     <main className="min-h-screen bg-neutral-950 px-6 py-20 text-white">
       <div className="mx-auto max-w-6xl">
@@ -31,6 +36,7 @@ export default function PricingPage() {
             ]}
             button="Upgrade to Pro"
             highlighted
+            canUpgrade={isAuthenticated && !isLoading}
           />
 
           <PricingCard
@@ -44,6 +50,7 @@ export default function PricingPage() {
               "Advanced tools",
             ]}
             button="Upgrade to Business"
+            canUpgrade={isAuthenticated && !isLoading}
           />
 
           <PricingCard
@@ -57,6 +64,7 @@ export default function PricingPage() {
               "Priority access",
             ]}
             button="Upgrade to Pro"
+            canUpgrade={isAuthenticated && !isLoading}
           />
 
           <PricingCard
@@ -70,6 +78,7 @@ export default function PricingPage() {
               "Advanced tools",
             ]}
             button="Upgrade to Business"
+            canUpgrade={isAuthenticated && !isLoading}
           />
         </div>
       </div>
@@ -84,6 +93,7 @@ function PricingCard({
   features,
   button,
   highlighted,
+  canUpgrade = false,
 }: {
   name: string;
   price: string;
@@ -91,6 +101,7 @@ function PricingCard({
   features: string[];
   button: string;
   highlighted?: boolean;
+  canUpgrade?: boolean;
 }) {
   return (
     <div
@@ -109,7 +120,7 @@ function PricingCard({
         ))}
       </ul>
 
-      {paypalPlan ? (
+      {paypalPlan && canUpgrade ? (
         <PayPalUpgradeButton
           plan={paypalPlan}
           className={`mt-8 w-full rounded-lg px-4 py-3 font-semibold ${
@@ -118,7 +129,7 @@ function PricingCard({
         >
           {button}
         </PayPalUpgradeButton>
-      ) : (
+      ) : !paypalPlan ? (
         <button
           className={`mt-8 w-full rounded-lg px-4 py-3 font-semibold ${
             highlighted ? "bg-black text-white" : "bg-white text-black"
@@ -126,7 +137,7 @@ function PricingCard({
         >
           {button}
         </button>
-      )}
+      ) : null}
     </div>
   );
 }

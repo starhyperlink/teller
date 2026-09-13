@@ -12,6 +12,12 @@ const planAmounts: Record<string, string> = {
   "business-yearly": "5800.00",
 };
 
+const zarToUsdRate = Number(process.env.PAYPAL_ZAR_TO_USD_RATE || "0.0549");
+
+function convertZarToUsd(amount: string) {
+  return (Number(amount) * zarToUsdRate).toFixed(2);
+}
+
 async function getPayPalAccessToken() {
   const credentials = Buffer.from(
     `${process.env.PAYPAL_CLIENT_ID}:${process.env.PAYPAL_CLIENT_SECRET}`
@@ -45,11 +51,13 @@ export async function POST(request: Request) {
 
   try {
     const { plan } = await request.json();
-    const amount = planAmounts[plan];
+    const zarAmount = planAmounts[plan];
 
-    if (!amount) {
+    if (!zarAmount || !Number.isFinite(zarToUsdRate) || zarToUsdRate <= 0) {
       return NextResponse.json({ error: "Invalid payment amount." }, { status: 400 });
     }
+
+    const usdAmount = convertZarToUsd(zarAmount);
 
     const accessToken = await getPayPalAccessToken();
     const appUrl = process.env.NEXT_PUBLIC_APP_URL;
@@ -67,7 +75,7 @@ export async function POST(request: Request) {
       },
       body: JSON.stringify({
         intent: "CAPTURE",
-        purchase_units: [{ amount: { currency_code: "ZAR", value: amount } }],
+        purchase_units: [{ amount: { currency_code: "USD", value: usdAmount } }],
         application_context: {
           user_action: "PAY_NOW",
           return_url: `${appUrl}/api/paypal/capture-order`,
