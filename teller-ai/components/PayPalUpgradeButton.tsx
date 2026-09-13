@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useAuth0 } from "@auth0/auth0-react";
 
 export default function PayPalUpgradeButton({
   plan,
@@ -13,16 +14,26 @@ export default function PayPalUpgradeButton({
 }) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { user, isAuthenticated, loginWithRedirect, getAccessTokenSilently } = useAuth0();
 
   async function handleUpgrade() {
+    if (!isAuthenticated || !user?.sub) {
+      await loginWithRedirect({ appState: { returnTo: window.location.pathname } });
+      return;
+    }
+
     setIsLoading(true);
     setError(null);
 
     try {
+      const token = await getAccessTokenSilently();
       const response = await fetch("/api/paypal/create-order", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plan }),
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ plan, userId: user.sub }),
       });
       const result = await response.json();
 

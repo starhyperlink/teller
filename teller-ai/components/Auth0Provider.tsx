@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 const domain = process.env.NEXT_PUBLIC_AUTH0_DOMAIN || "example.auth0.com";
 const clientId = process.env.NEXT_PUBLIC_AUTH0_CLIENT_ID || "placeholder-client-id";
 const configuredCallbackUrl = process.env.NEXT_PUBLIC_AUTH0_CALLBACK_URL;
+const audience = process.env.NEXT_PUBLIC_AUTH0_AUDIENCE;
 
 export function AppAuthProvider({ children }: { children: ReactNode }) {
   const redirectUri =
@@ -24,7 +25,11 @@ export function AppAuthProvider({ children }: { children: ReactNode }) {
     <Auth0Provider
       domain={domain}
       clientId={clientId}
-      authorizationParams={{ redirect_uri: redirectUri }}
+      authorizationParams={{
+        redirect_uri: redirectUri,
+        ...(audience ? { audience } : {}),
+        scope: "openid profile email",
+      }}
       onRedirectCallback={handleRedirectCallback}
       cacheLocation="localstorage"
     >

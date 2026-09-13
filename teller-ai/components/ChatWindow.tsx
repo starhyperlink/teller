@@ -23,8 +23,6 @@ type HistoryItem = {
 
 type Theme = "auto" | "dark" | "light";
 
-const FREE_CHAT_LIMIT = 100;
-
 function getUsageMonth() {
   const now = new Date();
   return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
@@ -51,11 +49,13 @@ export default function ChatWindow() {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [theme, setTheme] = useState<Theme>("auto");
   const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
-  const { user, isAuthenticated, isLoading: isAuthLoading, loginWithRedirect, logout } = useAuth0();
+  const { user, isAuthenticated, isLoading: isAuthLoading, loginWithRedirect, logout, getAccessTokenSilently } = useAuth0();
   const accountId = user?.sub || user?.email || "guest";
   const historyStorageKey = `teller_histories:${accountId}`;
   const usageStorageKey = `teller_usage:${accountId}:${getUsageMonth()}`;
   const [monthlyChatCount, setMonthlyChatCount] = useState(0);
+  const [planName, setPlanName] = useState("Free");
+  const [usageLimit, setUsageLimit] = useState(100);
   const accountProfile = {
     name: user?.name || "Teller User",
     email: user?.email || "user@example.com",
@@ -152,6 +152,23 @@ export default function ChatWindow() {
       // eslint-disable-next-line no-empty
     } catch (e) {}
   }, [historyStorageKey, isAuthLoading, usageStorageKey]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    getAccessTokenSilently()
+      .then((token) => fetch("/api/account", { headers: { Authorization: `Bearer ${token}` } }))
+      .then((response) => (response.ok ? response.json() : null))
+      .then((account) => {
+        if (!account) return;
+        setPlanName(account.plan);
+        setUsageLimit(account.usageLimit);
+        if (Number.isInteger(account.usageCount)) {
+          setMonthlyChatCount(account.usageCount);
+          localStorage.setItem(usageStorageKey, String(account.usageCount));
+        }
+      })
+      .catch(() => undefined);
+  }, [getAccessTokenSilently, isAuthenticated]);
 
   // Persist active history whenever messages change
   useEffect(() => {
@@ -250,7 +267,7 @@ export default function ChatWindow() {
 
   async function sendMessage() {
     if (!input.trim()) return;
-    if (monthlyChatCount >= FREE_CHAT_LIMIT) return;
+    if (monthlyChatCount >= usageLimit) return;
 
     const userMessage: Message = {
       role: "user",
@@ -266,6 +283,21 @@ export default function ChatWindow() {
     const nextMonthlyChatCount = monthlyChatCount + 1;
     setMonthlyChatCount(nextMonthlyChatCount);
     localStorage.setItem(usageStorageKey, String(nextMonthlyChatCount));
+
+    if (isAuthenticated) {
+      getAccessTokenSilently()
+        .then((token) =>
+          fetch("/api/account/usage", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ usageCount: nextMonthlyChatCount }),
+          })
+        )
+        .catch(() => undefined);
+    }
 
     try {
       const response = await fetch("/api/chat", {
@@ -430,7 +462,7 @@ export default function ChatWindow() {
             )}
             {isAuthenticated && (
               <div className="mt-3 px-3 text-xs text-neutral-400">
-                Free plan: {monthlyChatCount}/{FREE_CHAT_LIMIT} chats this month
+                {planName} plan: {monthlyChatCount}/{usageLimit} chats this month
               </div>
             )}
           </div>

@@ -3,14 +3,14 @@
 import { useAuth0 } from "@auth0/auth0-react";
 import { useEffect, useState } from "react";
 
-const FREE_CHAT_LIMIT = 100;
-
 export default function SettingsPage() {
-  const { user, isAuthenticated, isLoading, loginWithRedirect, logout } = useAuth0();
+  const { user, isAuthenticated, isLoading, loginWithRedirect, logout, getAccessTokenSilently } = useAuth0();
   const accountId = user?.sub || user?.email || "guest";
   const usageKey = `teller_usage:${accountId}:${new Date().getUTCFullYear()}-${String(new Date().getUTCMonth() + 1).padStart(2, "0")}`;
   const preferencesKey = `teller_preferences:${accountId}`;
   const [monthlyChatCount, setMonthlyChatCount] = useState(0);
+  const [planName, setPlanName] = useState("Free");
+  const [usageLimit, setUsageLimit] = useState(100);
   const [aiResponsesEnabled, setAiResponsesEnabled] = useState(true);
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
   const [saveMessage, setSaveMessage] = useState("");
@@ -40,6 +40,20 @@ export default function SettingsPage() {
       setAutoScrollEnabled(true);
     }
   }, [preferencesKey]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    getAccessTokenSilently()
+      .then((token) => fetch("/api/account", { headers: { Authorization: `Bearer ${token}` } }))
+      .then((response) => (response.ok ? response.json() : null))
+      .then((account) => {
+        if (!account) return;
+        setPlanName(account.plan);
+        setUsageLimit(account.usageLimit);
+        if (Number.isInteger(account.usageCount)) setMonthlyChatCount(account.usageCount);
+      })
+      .catch(() => undefined);
+  }, [getAccessTokenSilently, isAuthenticated]);
 
   function saveSettings() {
     localStorage.setItem(
@@ -85,11 +99,13 @@ export default function SettingsPage() {
               </div>
               <div className="flex items-center justify-between">
                 <span>Plan</span>
-                <span className="text-neutral-100">Free</span>
+                <span className="text-neutral-100">
+                  {planName}
+                </span>
               </div>
               <div className="flex items-center justify-between">
                 <span>Chats this month</span>
-                <span className="text-neutral-100">{monthlyChatCount}/{FREE_CHAT_LIMIT}</span>
+                <span className="text-neutral-100">{monthlyChatCount}/{usageLimit}</span>
               </div>
             </div>
           </section>
