@@ -12,14 +12,14 @@ export default function PricingPage() {
         <div className="grid gap-6 md:grid-cols-3">
           <PricingCard
             name="Free"
-            price="$0"
+            price="R0"
             features={["20 messages per day", "Basic AI chat", "Chat history"]}
             button="Start Free"
           />
 
           <PricingCard
             name="Pro"
-            price="$10/mo"
+            price="R180/mo"
             features={[
               "1,000 messages per month",
               "Faster responses",
@@ -32,7 +32,7 @@ export default function PricingPage() {
 
           <PricingCard
             name="Business"
-            price="$29/mo"
+            price="R520/mo"
             features={[
               "5,000 messages per month",
               "Team access",
