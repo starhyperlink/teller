@@ -24,11 +24,6 @@ type HistoryItem = {
 
 type Theme = "auto" | "dark" | "light";
 
-function getUsageMonth() {
-  const now = new Date();
-  return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
-}
-
 export default function ChatWindow() {
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -52,9 +47,6 @@ export default function ChatWindow() {
   const [theme, setTheme] = useState<Theme>("auto");
   const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
   const { user, isAuthenticated, isLoading: isAuthLoading, loginWithRedirect, logout, getAccessTokenSilently } = useAuth0();
-  const accountId = user?.sub || user?.email || "guest";
-  const historyStorageKey = `teller_histories:${accountId}`;
-  const usageStorageKey = `teller_usage:${accountId}:${getUsageMonth()}`;
   const [monthlyChatCount, setMonthlyChatCount] = useState(0);
   const [planName, setPlanName] = useState("Free");
   const [usageLimit, setUsageLimit] = useState(100);
@@ -118,21 +110,7 @@ export default function ChatWindow() {
             "Hi, I’m Teller AI. Ask me anything — I can help with research, writing, business, coding, summaries, and ideas.",
         },
       ]);
-      const raw = localStorage.getItem(historyStorageKey);
-      const storedUsage = Number(localStorage.getItem(usageStorageKey) || "0");
-      setMonthlyChatCount(Number.isFinite(storedUsage) ? storedUsage : 0);
-
-      let localHistories: HistoryItem[] = [];
-      if (raw) {
-        const parsed: HistoryItem[] = JSON.parse(raw);
-        localHistories = parsed.sort((a, b) => b.updatedAt - a.updatedAt);
-      }
-
-      if (localHistories.length) {
-        setHistories(localHistories);
-        setActiveHistoryId(localHistories[0].id);
-        setMessages(localHistories[0].messages);
-      } else {
+      if (!isAuthenticated) {
         const initialMessages: Message[] = [
           {
             role: "assistant",
@@ -140,21 +118,16 @@ export default function ChatWindow() {
               "Hi, I’m Teller AI. Ask me anything — I can help with research, writing, business, coding, summaries, and ideas.",
           },
         ];
-        const id = Date.now().toString();
         const initial: HistoryItem = {
-          id,
+          id: Date.now().toString(),
           title: "New chat",
           messages: initialMessages,
           updatedAt: Date.now(),
         };
-        localHistories = [initial];
-        setHistories(localHistories);
-        setActiveHistoryId(id);
+        setHistories([initial]);
+        setActiveHistoryId(initial.id);
         setMessages(initialMessages);
-        localStorage.setItem(historyStorageKey, JSON.stringify(localHistories));
-      }
-
-      if (!isAuthenticated) {
+        setMonthlyChatCount(0);
         historyHydratedRef.current = true;
         return;
       }
@@ -170,15 +143,35 @@ export default function ChatWindow() {
             setHistories(remoteHistories);
             setActiveHistoryId(remoteHistories[0].id);
             setMessages(remoteHistories[0].messages);
+          } else {
+            const initialMessages: Message[] = [
+              {
+                role: "assistant",
+                content:
+                  "Hi, I’m Teller AI. Ask me anything — I can help with research, writing, business, coding, summaries, and ideas.",
+              },
+            ];
+            const initial: HistoryItem = {
+              id: Date.now().toString(),
+              title: "New chat",
+              messages: initialMessages,
+              updatedAt: Date.now(),
+            };
+            setHistories([initial]);
+            setActiveHistoryId(initial.id);
+            setMessages(initialMessages);
           }
         })
-        .catch(() => undefined)
+        .catch(() => {
+          setHistories([]);
+          setActiveHistoryId(null);
+        })
         .finally(() => {
           historyHydratedRef.current = true;
         });
       // eslint-disable-next-line no-empty
     } catch (e) {}
-  }, [getAccessTokenSilently, historyStorageKey, isAuthLoading, isAuthenticated, usageStorageKey]);
+  }, [getAccessTokenSilently, isAuthLoading, isAuthenticated]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -191,7 +184,6 @@ export default function ChatWindow() {
         setUsageLimit(account.usageLimit);
         if (Number.isInteger(account.usageCount)) {
           setMonthlyChatCount(account.usageCount);
-          localStorage.setItem(usageStorageKey, String(account.usageCount));
         }
       })
       .catch(() => undefined);
@@ -219,12 +211,9 @@ export default function ChatWindow() {
         next.splice(idx, 1);
         next.unshift(updated);
       }
-      try {
-        localStorage.setItem(historyStorageKey, JSON.stringify(next));
-      } catch (e) {}
       return next;
     });
-  }, [messages, activeHistoryId, historyStorageKey]);
+  }, [messages, activeHistoryId]);
 
   useEffect(() => {
     if (!isAuthenticated || !historyHydratedRef.current) return;
@@ -268,9 +257,6 @@ export default function ChatWindow() {
     setHistories(next);
     setActiveHistoryId(id);
     setMessages(initialMessages);
-    try {
-      localStorage.setItem(historyStorageKey, JSON.stringify(next));
-    } catch (e) {}
     setIsSidebarOpen(false);
   }
 
@@ -283,10 +269,6 @@ export default function ChatWindow() {
     if (!confirm("Delete this conversation? This cannot be undone.")) return;
     setHistories((prev) => {
       const next = prev.filter((h) => h.id !== id);
-      try {
-        localStorage.setItem(historyStorageKey, JSON.stringify(next));
-      } catch (e) {}
-
       // if deleted active, switch to first or create new
       if (id === activeHistoryId) {
         if (next.length) {
@@ -332,7 +314,6 @@ export default function ChatWindow() {
     setLoading(true);
     const nextMonthlyChatCount = monthlyChatCount + 1;
     setMonthlyChatCount(nextMonthlyChatCount);
-    localStorage.setItem(usageStorageKey, String(nextMonthlyChatCount));
 
     if (isAuthenticated) {
       getAccessTokenSilently()
@@ -393,9 +374,6 @@ export default function ChatWindow() {
             } else {
               next.unshift({ id: activeHistoryId, title: data.title, messages: [...updatedMessages, assistantMessage], updatedAt: Date.now() });
             }
-            try {
-              localStorage.setItem(historyStorageKey, JSON.stringify(next));
-            } catch (e) {}
             return next;
           });
         } else if (activeHistoryId) {
@@ -419,9 +397,6 @@ export default function ChatWindow() {
                       const item = next.splice(idx, 1)[0];
                       next.unshift(item);
                     }
-                    try {
-                      localStorage.setItem(historyStorageKey, JSON.stringify(next));
-                    } catch (e) {}
                     return next;
                   });
                 }

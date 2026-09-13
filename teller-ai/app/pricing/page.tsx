@@ -31,7 +31,7 @@ export default function PricingPage() {
           <PricingCard
             name="Free"
             price="R0"
-            features={["20 messages per day", "Basic AI chat", "Chat history"]}
+            features={["100 messages per month", "Basic AI chat", "Chat history"]}
             button="Start Free"
             onClick={startFreePlan}
             disabled={isLoading}
