@@ -312,29 +312,14 @@ export default function ChatWindow() {
     setMessages(updatedMessages);
     setInput("");
     setLoading(true);
-    const nextMonthlyChatCount = monthlyChatCount + 1;
-    setMonthlyChatCount(nextMonthlyChatCount);
-
-    if (isAuthenticated) {
-      getAccessTokenSilently()
-        .then((token) =>
-          fetch("/api/account/usage", {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${token}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ usageCount: nextMonthlyChatCount }),
-          })
-        )
-        .catch(() => undefined);
-    }
 
     try {
+      const token = isAuthenticated ? await getAccessTokenSilently() : null;
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
           // include file data inline for the API if present
@@ -353,6 +338,9 @@ export default function ChatWindow() {
       const data = await response.json();
 
       if (data.reply) {
+        if (Number.isInteger(data.usageCount)) {
+          setMonthlyChatCount(data.usageCount);
+        }
         const assistantMessage: Message = { role: "assistant", content: data.reply, file: null };
         setMessages([...updatedMessages, assistantMessage]);
         playReplySound();

@@ -1,8 +1,13 @@
 import { NextResponse } from "next/server";
 import { callTellerAI } from "@/lib/ai";
+import { getAuthenticatedUserId } from "@/lib/auth0-management";
+import { incrementUserUsage } from "@/lib/postgres";
+
+export const runtime = "nodejs";
 
 export async function POST(req: Request) {
   try {
+    const userId = await getAuthenticatedUserId(req);
     const body = await req.json();
     const { messages } = body;
 
@@ -32,7 +37,8 @@ export async function POST(req: Request) {
         // ignore title errors
       }
 
-      return NextResponse.json({ reply, title });
+      const usageCount = userId ? await incrementUserUsage(userId) : null;
+      return NextResponse.json({ reply, title, usageCount });
   } catch (error) {
     console.error("Chat API error:", error);
 

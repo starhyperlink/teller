@@ -87,6 +87,28 @@ export async function saveUserUsage(userId: string, usageCount: number, usageMon
   );
 }
 
+export async function incrementUserUsage(userId: string) {
+  await ensureSchema();
+  const usageMonth = currentUsageMonth();
+  const result = await getPool().query<{ usage_count: number }>(
+    `
+      INSERT INTO teller_user_chat_data (user_id, usage_month, usage_count, updated_at)
+      VALUES ($1, $2, 1, NOW())
+      ON CONFLICT (user_id) DO UPDATE SET
+        usage_month = EXCLUDED.usage_month,
+        usage_count = CASE
+          WHEN teller_user_chat_data.usage_month = EXCLUDED.usage_month
+            THEN teller_user_chat_data.usage_count + 1
+          ELSE 1
+        END,
+        updated_at = NOW()
+      RETURNING usage_count
+    `,
+    [userId, usageMonth],
+  );
+  return result.rows[0].usage_count;
+}
+
 export function getCurrentUsageMonth() {
   return currentUsageMonth();
 }
