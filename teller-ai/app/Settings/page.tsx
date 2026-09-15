@@ -14,6 +14,8 @@ export default function SettingsPage() {
   const [aiResponsesEnabled, setAiResponsesEnabled] = useState(true);
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
   const [saveMessage, setSaveMessage] = useState("");
+  const [firstName, setFirstName] = useState(user?.given_name || "");
+  const [surname, setSurname] = useState(user?.family_name || "");
 
   const accountProfile = {
     name: user?.name || "Teller User",
@@ -55,7 +57,29 @@ export default function SettingsPage() {
       .catch(() => undefined);
   }, [getAccessTokenSilently, isAuthenticated]);
 
-  function saveSettings() {
+  async function saveSettings() {
+    if (isAuthenticated) {
+      try {
+        const token = await getAccessTokenSilently();
+        const response = await fetch("/api/account", {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ firstName, surname }),
+        });
+        if (!response.ok) {
+          const data = await response.json().catch(() => null);
+          setSaveMessage(data?.error || "Could not save profile");
+          return;
+        }
+      } catch {
+        setSaveMessage("Could not save profile");
+        return;
+      }
+    }
+
     localStorage.setItem(
       preferencesKey,
       JSON.stringify({ aiResponsesEnabled, autoScrollEnabled }),
@@ -89,10 +113,26 @@ export default function SettingsPage() {
           <section className="rounded-xl border border-neutral-800 bg-neutral-950 p-5">
             <h2 className="text-lg font-semibold">Personal details</h2>
             <div className="mt-4 space-y-3 text-sm text-neutral-300">
-              <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
-                <span>Name</span>
-                <span className="text-neutral-100">{accountProfile.name}</span>
-              </div>
+              <label className="block border-b border-neutral-800 pb-3">
+                <span>First name</span>
+                <input
+                  value={firstName}
+                  onChange={(event) => setFirstName(event.target.value)}
+                  className="mt-2 w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-neutral-100"
+                  maxLength={80}
+                  disabled={!isAuthenticated}
+                />
+              </label>
+              <label className="block border-b border-neutral-800 pb-3">
+                <span>Surname</span>
+                <input
+                  value={surname}
+                  onChange={(event) => setSurname(event.target.value)}
+                  className="mt-2 w-full rounded border border-neutral-700 bg-neutral-900 px-3 py-2 text-neutral-100"
+                  maxLength={80}
+                  disabled={!isAuthenticated}
+                />
+              </label>
               <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
                 <span>Email</span>
                 <span className="text-neutral-100">{accountProfile.email}</span>

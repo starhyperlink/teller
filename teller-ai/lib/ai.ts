@@ -18,9 +18,6 @@ You should:
 
 export type TellerAccountContext = {
   name: string;
-  plan: string;
-  usageCount: number;
-  usageLimit: number;
 };
 
 export async function callTellerAI(
@@ -28,7 +25,7 @@ export async function callTellerAI(
   accountContext?: TellerAccountContext
 ) {
   const accountPrompt = accountContext
-    ? `\n\nAccount context (use this to personalize the conversation; never expose internal metadata unless asked):\n- Account name: ${accountContext.name}\n- Plan: ${accountContext.plan}\n- Monthly chat usage: ${accountContext.usageCount}/${accountContext.usageLimit}\nAddress the account holder by name in your first response when appropriate.`
+    ? `\n\nThe user's name is ${accountContext.name}. Address the user by name when appropriate.`
     : "";
   const response = await fetch(process.env.AI_API_BASE_URL as string, {
     method: "POST",

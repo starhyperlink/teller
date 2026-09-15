@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { callTellerAI, type TellerAccountContext } from "@/lib/ai";
 import { getAuth0User, getAuthenticatedUserId } from "@/lib/auth0-management";
+import { getFirebaseAdmin } from "@/lib/firebase-admin";
 import { getPlanKey, plans } from "@/lib/plans";
 
 export async function POST(req: Request) {
@@ -23,7 +24,15 @@ export async function POST(req: Request) {
       const planKey = getPlanKey(metadata.plan) || "free";
       const plan = plans[planKey];
       const usageMonth = `${new Date().getUTCFullYear()}-${String(new Date().getUTCMonth() + 1).padStart(2, "0")}`;
-      const usageCount = metadata.usage_month === usageMonth ? Number(metadata.usage_count || 0) : 0;
+      const { firestore } = getFirebaseAdmin();
+      const usageSnapshot = await firestore
+        .collection("users")
+        .doc(encodeURIComponent(userId))
+        .collection("account")
+        .doc("usage")
+        .get();
+      const usageData = usageSnapshot.data();
+      const usageCount = usageData?.usageMonth === usageMonth ? Number(usageData.usageCount || 0) : 0;
 
       if (usageCount >= plan.usageLimit) {
         return NextResponse.json(
@@ -34,9 +43,6 @@ export async function POST(req: Request) {
 
       accountContext = {
         name: user.name || user.nickname || user.email || "Teller User",
-        plan: plan.name,
-        usageCount,
-        usageLimit: plan.usageLimit,
       };
     }
 

@@ -37,10 +37,29 @@ export async function getAuth0User(userId: string) {
   return response.json() as Promise<{
     user_id: string;
     name?: string;
+    given_name?: string;
+    family_name?: string;
     nickname?: string;
     email?: string;
     app_metadata?: Record<string, unknown>;
   }>;
+}
+
+export async function updateAuth0Profile(
+  userId: string,
+  profile: { given_name: string; family_name: string; name: string },
+) {
+  const token = await getManagementToken();
+  const response = await fetch(getManagementApiUrl(`/users/${encodeURIComponent(userId)}`), {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(profile),
+  });
+
+  if (!response.ok) throw new Error("Could not update the Auth0 profile.");
 }
 
 export async function updateAuth0Plan(

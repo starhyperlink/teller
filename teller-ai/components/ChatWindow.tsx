@@ -99,7 +99,7 @@ export default function ChatWindow() {
     } catch {}
   }
 
-  // Load only the current account's histories and monthly usage.
+  // Load only the current account's local histories and monthly usage.
   useEffect(() => {
     if (isAuthLoading) return;
 
@@ -113,99 +113,30 @@ export default function ChatWindow() {
             getWelcomeMessage(user?.name),
         },
       ]);
-      if (!isAuthenticated) {
-        const initialMessages: Message[] = [
-          {
-            role: "assistant",
-              content: getWelcomeMessage(user?.name),
-          },
-        ];
-        const initial: HistoryItem = {
-          id: Date.now().toString(),
-          title: "New chat",
-          messages: initialMessages,
-          updatedAt: Date.now(),
-        };
-        setHistories([initial]);
-        setActiveHistoryId(initial.id);
-        setMessages(initialMessages);
-        setMonthlyChatCount(0);
-        historyHydratedRef.current = true;
-        return;
-      }
-
-      getAccessTokenSilently()
-        .then((token) => fetch("/api/account/history", { headers: { Authorization: `Bearer ${token}` } }))
-        .then(async (response) => {
-          if (!response.ok) throw new Error("Could not load remote history.");
-          const data = await response.json();
-          if (!Array.isArray(data.history)) throw new Error("Invalid remote history.");
-          const remoteHistories = data.history as HistoryItem[];
-          const initialMessages: Message[] = [{
-            role: "assistant",
-            content: getWelcomeMessage(user?.name),
-          }];
-          const initial: HistoryItem = {
-            id: Date.now().toString(),
-            title: "New chat",
-            messages: initialMessages,
-            updatedAt: Date.now(),
-          };
-          setHistories([initial, ...remoteHistories]);
-          setActiveHistoryId(initial.id);
-          setMessages(initialMessages);
-        })
-        .catch(() => {
-          setHistories([]);
-          setActiveHistoryId(null);
-        })
-        .finally(() => {
-          historyHydratedRef.current = true;
-        });
+      const historyKey = `teller_chat_history:${user?.sub || "guest"}`;
+      const savedHistory = localStorage.getItem(historyKey);
+      const parsedHistory = savedHistory ? JSON.parse(savedHistory) : null;
+      const localHistories = Array.isArray(parsedHistory) ? parsedHistory as HistoryItem[] : [];
+      const initialMessages: Message[] = [{
+        role: "assistant",
+        content: getWelcomeMessage(user?.name),
+      }];
+      const initial: HistoryItem = {
+        id: Date.now().toString(),
+        title: "New chat",
+        messages: initialMessages,
+        updatedAt: Date.now(),
+      };
+      const nextHistories = [initial, ...localHistories.filter((item) => item.id !== initial.id)];
+      const active = initial;
+      setHistories(nextHistories);
+      setActiveHistoryId(active.id);
+      setMessages(active.messages);
+      setMonthlyChatCount(0);
+      historyHydratedRef.current = true;
       // eslint-disable-next-line no-empty
     } catch (e) {}
   }, [getAccessTokenSilently, isAuthLoading, isAuthenticated, user?.name]);
-
-  // Keep saved conversations synchronized through Firebase-backed Firestore updates.
-  useEffect(() => {
-    if (!isAuthenticated || isAuthLoading) return;
-    let cancelled = false;
-    let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
-
-    getAccessTokenSilently()
-      .then((token) => fetch("/api/account/history?stream=1", {
-        headers: { Authorization: `Bearer ${token}` },
-      }))
-      .then(async (response) => {
-        if (!response.ok || !response.body) throw new Error("Could not stream remote history.");
-        reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        while (!cancelled) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const events = buffer.split("\n\n");
-          buffer = events.pop() || "";
-          for (const event of events) {
-            const line = event.split("\n").find((entry) => entry.startsWith("data: "));
-            if (!line) continue;
-            const data = JSON.parse(line.slice(6)) as { history: HistoryItem[] };
-            setHistories((current) => {
-              const active = current.find((item) => item.id === activeHistoryId);
-              const incoming = data.history.filter((item) => item.id !== activeHistoryId);
-              return active ? [active, ...incoming] : incoming;
-            });
-          }
-        }
-      })
-      .catch(() => undefined);
-
-    return () => {
-      cancelled = true;
-      void reader?.cancel();
-    };
-  }, [activeHistoryId, getAccessTokenSilently, isAuthLoading, isAuthenticated]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -250,27 +181,10 @@ export default function ChatWindow() {
   }, [messages, activeHistoryId]);
 
   useEffect(() => {
-    if (!isAuthenticated || !historyHydratedRef.current) return;
-    let cancelled = false;
-    getAccessTokenSilently()
-      .then((token) =>
-        fetch("/api/account/history", {
-          method: "PUT",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ history: histories }),
-        }),
-      )
-      .then((response) => {
-        if (!response.ok && !cancelled) throw new Error("Could not save remote history.");
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [getAccessTokenSilently, histories, isAuthenticated]);
+    if (!historyHydratedRef.current) return;
+    const historyKey = `teller_chat_history:${user?.sub || "guest"}`;
+    localStorage.setItem(historyKey, JSON.stringify(histories));
+  }, [histories, user?.sub]);
 
   function createNewChat() {
     const id = Date.now().toString();
@@ -356,9 +270,7 @@ export default function ChatWindow() {
             method: "POST",
             headers: {
               Authorization: `Bearer ${token}`,
-              "Content-Type": "application/json",
             },
-            body: JSON.stringify({ usageCount: nextMonthlyChatCount }),
           })
         )
         .catch(() => undefined);
