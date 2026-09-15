@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAuthenticatedUserId } from "@/lib/auth0-management";
 import { getFirebaseAdmin } from "@/lib/firebase-admin";
+import { getUserChatData, saveUserChatHistory } from "@/lib/postgres";
 
 export const runtime = "nodejs";
 
@@ -107,23 +108,15 @@ async function toClientHistory(history: ReturnType<typeof sanitizeHistory>, buck
   );
 }
 
-function historyDocument(firestore: ReturnType<typeof getFirebaseAdmin>["firestore"], userId: string) {
-  return firestore
-    .collection("users")
-    .doc(encodeURIComponent(userId))
-    .collection("account")
-    .doc("chat-history");
-}
-
 export async function GET(request: Request) {
   const userId = await getAuthenticatedUserId(request);
   if (!userId) return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
 
   try {
-    const { firestore, bucket } = getFirebaseAdmin();
-    const snapshot = await historyDocument(firestore, userId).get();
-    const history = snapshot.exists && Array.isArray(snapshot.data()?.history)
-      ? await toClientHistory(sanitizeHistory(snapshot.data()?.history), bucket)
+    const { bucket } = getFirebaseAdmin();
+    const chatData = await getUserChatData(userId);
+    const history = chatData
+      ? await toClientHistory(sanitizeHistory(chatData.history), bucket)
       : [];
     return NextResponse.json({ history });
   } catch (error) {
@@ -142,9 +135,9 @@ export async function PUT(request: Request) {
       return NextResponse.json({ error: "Invalid chat history." }, { status: 400 });
     }
 
-    const { firestore, bucket } = getFirebaseAdmin();
+    const { bucket } = getFirebaseAdmin();
     const history = await storeMedia(sanitizeHistory(body.history), userId, bucket);
-    await historyDocument(firestore, userId).set({ history, updatedAt: Date.now() });
+    await saveUserChatHistory(userId, history);
     return NextResponse.json({ ok: true });
   } catch (error) {
     console.error("Account history API error:", error);

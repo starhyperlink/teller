@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAuth0User, getAuthenticatedUserId } from "@/lib/auth0-management";
 import { plans, type PlanKey } from "@/lib/plans";
+import { getCurrentUsageMonth, getUserChatData } from "@/lib/postgres";
 
 export async function GET(request: Request) {
   const userId = await getAuthenticatedUserId(request);
@@ -12,8 +13,9 @@ export async function GET(request: Request) {
     const metadataPlan = metadata.plan as PlanKey;
     const planKey = metadataPlan in plans ? metadataPlan : "free";
     const plan = plans[planKey];
-    const usageMonth = `${new Date().getUTCFullYear()}-${String(new Date().getUTCMonth() + 1).padStart(2, "0")}`;
-    const usageCount = metadata.usage_month === usageMonth ? Number(metadata.usage_count || 0) : 0;
+    const usageMonth = getCurrentUsageMonth();
+    const chatData = await getUserChatData(userId);
+    const usageCount = chatData?.usageMonth === usageMonth ? chatData.usageCount : 0;
 
     return NextResponse.json({
       plan: plan.name,

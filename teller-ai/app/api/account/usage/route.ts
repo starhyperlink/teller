@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getAuthenticatedUserId, updateAuth0Usage } from "@/lib/auth0-management";
+import { getAuthenticatedUserId } from "@/lib/auth0-management";
+import { saveUserUsage } from "@/lib/postgres";
 
 export async function POST(request: Request) {
   const userId = await getAuthenticatedUserId(request);
@@ -12,7 +13,7 @@ export async function POST(request: Request) {
     }
 
     const usageMonth = `${new Date().getUTCFullYear()}-${String(new Date().getUTCMonth() + 1).padStart(2, "0")}`;
-    await updateAuth0Usage(userId, usageCount, usageMonth);
+    await saveUserUsage(userId, usageCount, usageMonth);
     return NextResponse.json({ ok: true });
   } catch (error) {
     console.error("Account usage API error:", error);
