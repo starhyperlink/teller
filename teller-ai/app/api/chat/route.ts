@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
-import { callTellerAI } from "@/lib/ai";
+import { callTellerAI, type TellerAccountContext } from "@/lib/ai";
+import { getAuth0User, getAuthenticatedUserId } from "@/lib/auth0-management";
+import { getPlanKey, plans } from "@/lib/plans";
 
 export async function POST(req: Request) {
   try {
@@ -13,7 +15,32 @@ export async function POST(req: Request) {
       );
     }
 
-    const reply = await callTellerAI(messages);
+    let accountContext: TellerAccountContext | undefined;
+    const userId = await getAuthenticatedUserId(req);
+    if (userId) {
+      const user = await getAuth0User(userId);
+      const metadata = user.app_metadata || {};
+      const planKey = getPlanKey(metadata.plan) || "free";
+      const plan = plans[planKey];
+      const usageMonth = `${new Date().getUTCFullYear()}-${String(new Date().getUTCMonth() + 1).padStart(2, "0")}`;
+      const usageCount = metadata.usage_month === usageMonth ? Number(metadata.usage_count || 0) : 0;
+
+      if (usageCount >= plan.usageLimit) {
+        return NextResponse.json(
+          { error: `You have reached the ${plan.name} plan limit of ${plan.usageLimit} chats this month.` },
+          { status: 429 },
+        );
+      }
+
+      accountContext = {
+        name: user.name || user.nickname || user.email || "Teller User",
+        plan: plan.name,
+        usageCount,
+        usageLimit: plan.usageLimit,
+      };
+    }
+
+    const reply = await callTellerAI(messages, accountContext);
 
       // Ask the AI for a short title summarizing the conversation
       let title: string | null = null;
@@ -22,7 +49,7 @@ export async function POST(req: Request) {
         const titleResult = await callTellerAI([
           ...messages,
           { role: "user", content: titlePrompt },
-        ]);
+        ], accountContext);
 
         // sanitize titleResult to a single line and reasonable length
         if (titleResult) {

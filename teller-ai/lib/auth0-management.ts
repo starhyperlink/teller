@@ -36,6 +36,9 @@ export async function getAuth0User(userId: string) {
   if (!response.ok) throw new Error("Could not load the Auth0 account.");
   return response.json() as Promise<{
     user_id: string;
+    name?: string;
+    nickname?: string;
+    email?: string;
     app_metadata?: Record<string, unknown>;
   }>;
 }

@@ -24,12 +24,15 @@ type HistoryItem = {
 
 type Theme = "auto" | "dark" | "light";
 
+function getWelcomeMessage(name?: string) {
+  return `Hi${name ? `, ${name}` : ""}! I’m Teller AI. Ask me anything — I can help with research, writing, business, coding, summaries, and ideas.`;
+}
+
 export default function ChatWindow() {
   const [messages, setMessages] = useState<Message[]>([
     {
       role: "assistant",
-      content:
-        "Hi, I’m Teller AI. Ask me anything — I can help with research, writing, business, coding, summaries, and ideas.",
+      content: getWelcomeMessage(),
     },
   ]);
 
@@ -107,15 +110,14 @@ export default function ChatWindow() {
         {
           role: "assistant",
           content:
-            "Hi, I’m Teller AI. Ask me anything — I can help with research, writing, business, coding, summaries, and ideas.",
+            getWelcomeMessage(user?.name),
         },
       ]);
       if (!isAuthenticated) {
         const initialMessages: Message[] = [
           {
             role: "assistant",
-            content:
-              "Hi, I’m Teller AI. Ask me anything — I can help with research, writing, business, coding, summaries, and ideas.",
+              content: getWelcomeMessage(user?.name),
           },
         ];
         const initial: HistoryItem = {
@@ -139,28 +141,19 @@ export default function ChatWindow() {
           const data = await response.json();
           if (!Array.isArray(data.history)) throw new Error("Invalid remote history.");
           const remoteHistories = data.history as HistoryItem[];
-          if (remoteHistories.length) {
-            setHistories(remoteHistories);
-            setActiveHistoryId(remoteHistories[0].id);
-            setMessages(remoteHistories[0].messages);
-          } else {
-            const initialMessages: Message[] = [
-              {
-                role: "assistant",
-                content:
-                  "Hi, I’m Teller AI. Ask me anything — I can help with research, writing, business, coding, summaries, and ideas.",
-              },
-            ];
-            const initial: HistoryItem = {
-              id: Date.now().toString(),
-              title: "New chat",
-              messages: initialMessages,
-              updatedAt: Date.now(),
-            };
-            setHistories([initial]);
-            setActiveHistoryId(initial.id);
-            setMessages(initialMessages);
-          }
+          const initialMessages: Message[] = [{
+            role: "assistant",
+            content: getWelcomeMessage(user?.name),
+          }];
+          const initial: HistoryItem = {
+            id: Date.now().toString(),
+            title: "New chat",
+            messages: initialMessages,
+            updatedAt: Date.now(),
+          };
+          setHistories([initial, ...remoteHistories]);
+          setActiveHistoryId(initial.id);
+          setMessages(initialMessages);
         })
         .catch(() => {
           setHistories([]);
@@ -171,7 +164,48 @@ export default function ChatWindow() {
         });
       // eslint-disable-next-line no-empty
     } catch (e) {}
-  }, [getAccessTokenSilently, isAuthLoading, isAuthenticated]);
+  }, [getAccessTokenSilently, isAuthLoading, isAuthenticated, user?.name]);
+
+  // Keep saved conversations synchronized through Firebase-backed Firestore updates.
+  useEffect(() => {
+    if (!isAuthenticated || isAuthLoading) return;
+    let cancelled = false;
+    let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+
+    getAccessTokenSilently()
+      .then((token) => fetch("/api/account/history?stream=1", {
+        headers: { Authorization: `Bearer ${token}` },
+      }))
+      .then(async (response) => {
+        if (!response.ok || !response.body) throw new Error("Could not stream remote history.");
+        reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (!cancelled) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const events = buffer.split("\n\n");
+          buffer = events.pop() || "";
+          for (const event of events) {
+            const line = event.split("\n").find((entry) => entry.startsWith("data: "));
+            if (!line) continue;
+            const data = JSON.parse(line.slice(6)) as { history: HistoryItem[] };
+            setHistories((current) => {
+              const active = current.find((item) => item.id === activeHistoryId);
+              const incoming = data.history.filter((item) => item.id !== activeHistoryId);
+              return active ? [active, ...incoming] : incoming;
+            });
+          }
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+      void reader?.cancel();
+    };
+  }, [activeHistoryId, getAccessTokenSilently, isAuthLoading, isAuthenticated]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -244,7 +278,7 @@ export default function ChatWindow() {
       {
         role: "assistant",
         content:
-          "Hi, I’m Teller AI. Ask me anything — I can help with research, writing, business, coding, summaries, and ideas.",
+          getWelcomeMessage(user?.name),
       },
     ];
     const newItem: HistoryItem = {
@@ -277,7 +311,7 @@ export default function ChatWindow() {
         } else {
           const newId = Date.now().toString();
           const initialMessages: Message[] = [
-            { role: "assistant", content: "Hi, I’m Teller AI. Ask me anything — I can help with research, writing, business, coding, summaries, and ideas.", file: null },
+            { role: "assistant", content: getWelcomeMessage(user?.name), file: null },
           ];
           const newHist: HistoryItem = { id: newId, title: "New chat", messages: initialMessages, updatedAt: Date.now() };
           setHistories([newHist]);
@@ -335,6 +369,9 @@ export default function ChatWindow() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          ...(isAuthenticated
+            ? { Authorization: `Bearer ${await getAccessTokenSilently()}` }
+            : {}),
         },
         body: JSON.stringify({
           // include file data inline for the API if present
@@ -384,7 +421,12 @@ export default function ChatWindow() {
               try {
                 const res = await fetch("/api/title", {
                   method: "POST",
-                  headers: { "Content-Type": "application/json" },
+                  headers: {
+                    "Content-Type": "application/json",
+                    ...(isAuthenticated
+                      ? { Authorization: `Bearer ${await getAccessTokenSilently()}` }
+                      : {}),
+                  },
                   body: JSON.stringify({ messages: [...updatedMessages, { role: "assistant", content: data.reply }] }),
                 });
                 const d = await res.json();
@@ -405,7 +447,10 @@ export default function ChatWindow() {
           }
         }
       } else {
-        setMessages([...updatedMessages, { role: "assistant", content: "Sorry, something went wrong.", file: null }]);
+        setMessages([
+          ...updatedMessages,
+          { role: "assistant", content: data.error || "Sorry, something went wrong.", file: null },
+        ]);
       }
     } catch (err) {
       setMessages([...updatedMessages, { role: "assistant", content: "Network error. Please try again.", file: null }]);

@@ -119,6 +119,50 @@ export async function GET(request: Request) {
   const userId = await getAuthenticatedUserId(request);
   if (!userId) return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
 
+  if (new URL(request.url).searchParams.get("stream") === "1") {
+    try {
+      const { firestore, bucket } = getFirebaseAdmin();
+      const encoder = new TextEncoder();
+      let unsubscribe = () => {};
+      const stream = new ReadableStream({
+        start(controller) {
+          const sendHistory = async (snapshot: FirebaseFirestore.DocumentSnapshot) => {
+            const history = snapshot.exists && Array.isArray(snapshot.data()?.history)
+              ? await toClientHistory(sanitizeHistory(snapshot.data()?.history), bucket)
+              : [];
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ history })}\n\n`));
+          };
+
+          unsubscribe = historyDocument(firestore, userId).onSnapshot(
+            (snapshot) => {
+              void sendHistory(snapshot).catch((error) => controller.error(error));
+            },
+            (error) => controller.error(error),
+          );
+
+          request.signal.addEventListener("abort", () => {
+            unsubscribe();
+            controller.close();
+          });
+        },
+        cancel() {
+          unsubscribe();
+        },
+      });
+
+      return new Response(stream, {
+        headers: {
+          "Cache-Control": "no-cache, no-transform",
+          Connection: "keep-alive",
+          "Content-Type": "text/event-stream",
+        },
+      });
+    } catch (error) {
+      console.error("Account history stream error:", error);
+      return NextResponse.json({ error: "Could not stream chat history." }, { status: 500 });
+    }
+  }
+
   try {
     const { firestore, bucket } = getFirebaseAdmin();
     const snapshot = await historyDocument(firestore, userId).get();

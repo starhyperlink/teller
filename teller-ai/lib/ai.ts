@@ -16,9 +16,20 @@ You should:
 - Do not provide unsafe, illegal, or harmful instructions
 `;
 
+export type TellerAccountContext = {
+  name: string;
+  plan: string;
+  usageCount: number;
+  usageLimit: number;
+};
+
 export async function callTellerAI(
-  messages: { role: string; content: string }[]
+  messages: { role: string; content: string }[],
+  accountContext?: TellerAccountContext
 ) {
+  const accountPrompt = accountContext
+    ? `\n\nAccount context (use this to personalize the conversation; never expose internal metadata unless asked):\n- Account name: ${accountContext.name}\n- Plan: ${accountContext.plan}\n- Monthly chat usage: ${accountContext.usageCount}/${accountContext.usageLimit}\nAddress the account holder by name in your first response when appropriate.`
+    : "";
   const response = await fetch(process.env.AI_API_BASE_URL as string, {
     method: "POST",
     headers: {
@@ -30,7 +41,7 @@ export async function callTellerAI(
       messages: [
         {
           role: "system",
-          content: TELLER_AI_SYSTEM_PROMPT,
+          content: `${TELLER_AI_SYSTEM_PROMPT}${accountPrompt}`,
         },
         ...messages,
       ],
