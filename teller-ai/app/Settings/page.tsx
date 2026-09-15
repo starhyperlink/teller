@@ -6,7 +6,6 @@ import { useEffect, useState } from "react";
 export default function SettingsPage() {
   const { user, isAuthenticated, isLoading, loginWithRedirect, logout, getAccessTokenSilently } = useAuth0();
   const accountId = user?.sub || user?.email || "guest";
-  const usageKey = `teller_usage:${accountId}:${new Date().getUTCFullYear()}-${String(new Date().getUTCMonth() + 1).padStart(2, "0")}`;
   const preferencesKey = `teller_preferences:${accountId}`;
   const [monthlyChatCount, setMonthlyChatCount] = useState(0);
   const [planName, setPlanName] = useState("Free");
@@ -24,11 +23,6 @@ export default function SettingsPage() {
   };
 
   useEffect(() => {
-    const storedUsage = Number(localStorage.getItem(usageKey) || "0");
-    setMonthlyChatCount(Number.isFinite(storedUsage) ? storedUsage : 0);
-  }, [usageKey]);
-
-  useEffect(() => {
     try {
       const storedPreferences = JSON.parse(localStorage.getItem(preferencesKey) || "null");
       if (storedPreferences) {
@@ -43,16 +37,24 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (!isAuthenticated) return;
-    getAccessTokenSilently()
-      .then((token) => fetch("/api/account", { headers: { Authorization: `Bearer ${token}` } }))
-      .then((response) => (response.ok ? response.json() : null))
-      .then((account) => {
-        if (!account) return;
+    const loadAccount = async () => {
+      try {
+        const token = await getAccessTokenSilently();
+        const response = await fetch("/api/account", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!response.ok) return;
+        const account = await response.json();
         setPlanName(account.plan);
         setUsageLimit(account.usageLimit);
         if (Number.isInteger(account.usageCount)) setMonthlyChatCount(account.usageCount);
-      })
-      .catch(() => undefined);
+      } catch {
+      }
+    };
+
+    void loadAccount();
+    window.addEventListener("focus", loadAccount);
+    return () => window.removeEventListener("focus", loadAccount);
   }, [getAccessTokenSilently, isAuthenticated]);
 
   function saveSettings() {

@@ -8,6 +8,12 @@ export default function HomePage() {
           Introducing Teller AI
         </div>
 
+        <img
+          src="/jupiter-black.svg"
+          alt="Black Jupiter illustration"
+          className="mb-8 h-40 w-40"
+        />
+
         <h1 className="max-w-4xl text-5xl font-bold tracking-tight md:text-7xl">
           Your intelligent AI assistant for work, research, and ideas.
         </h1>

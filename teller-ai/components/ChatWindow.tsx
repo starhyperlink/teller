@@ -337,9 +337,14 @@ export default function ChatWindow() {
 
       const data = await response.json();
 
+      const hasServerUsageCount = Number.isInteger(data.usageCount);
+      if (hasServerUsageCount) {
+        setMonthlyChatCount(data.usageCount);
+      }
+
       if (data.reply) {
-        if (Number.isInteger(data.usageCount)) {
-          setMonthlyChatCount(data.usageCount);
+        if (isAuthenticated && !hasServerUsageCount) {
+          setMonthlyChatCount((count) => count + 1);
         }
         const assistantMessage: Message = { role: "assistant", content: data.reply, file: null };
         setMessages([...updatedMessages, assistantMessage]);
