@@ -465,6 +465,8 @@ export default function ChatWindow() {
     try {
       if (isImageGenerationRequest) {
         const puter = await waitForPuter();
+        const ai = puter.ai;
+        if (!ai) throw new Error("Puter image generation is unavailable. Check your connection and try again.");
         let statusMessages = updatedMessages;
         if (puter.auth && !puter.auth.isSignedIn()) {
           const signInStatus: Message = {
@@ -477,7 +479,7 @@ export default function ChatWindow() {
           await puter.auth.signIn();
         }
         const inputImageMimeType = pendingFile?.type || pendingFile?.dataUrl.match(/^data:([^;,]+)/)?.[1] || "image/png";
-        const result = await puter.ai.txt2img(input.trim(), {
+        const result = await ai.txt2img(input.trim(), {
           model: "gpt-image-1-mini",
           quality: "medium",
           ratio: { w: 1, h: 1 },
