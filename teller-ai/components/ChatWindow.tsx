@@ -28,6 +28,10 @@ type Theme = "auto" | "dark" | "light";
 declare global {
   interface Window {
     puter?: {
+      auth?: {
+        isSignedIn: () => boolean;
+        signIn: () => Promise<unknown>;
+      };
       ai?: {
         txt2img: (
           prompt: string,
@@ -461,6 +465,17 @@ export default function ChatWindow() {
     try {
       if (isImageGenerationRequest) {
         const puter = await waitForPuter();
+        let statusMessages = updatedMessages;
+        if (puter.auth && !puter.auth.isSignedIn()) {
+          const signInStatus: Message = {
+            role: "assistant",
+            content: "Puter is not signed in. Logging you in to Puter before generating the image...",
+            file: null,
+          };
+          statusMessages = [...updatedMessages, signInStatus];
+          setMessages(statusMessages);
+          await puter.auth.signIn();
+        }
         const inputImageMimeType = pendingFile?.type || pendingFile?.dataUrl.match(/^data:([^;,]+)/)?.[1] || "image/png";
         const result = await puter.ai.txt2img(input.trim(), {
           model: "gpt-image-1-mini",
