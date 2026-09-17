@@ -20,21 +20,6 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
-## Local Puter login helper
-
-The optional Selenium helper at `scripts/puter_login.py` reads credentials from
-environment variables and never stores them in the repository:
-
-```bash
-python -m pip install -r requirements-selenium.txt
-export PUTER_USERNAME='your-account-email'
-export PUTER_PASSWORD='your-account-password'
-python scripts/puter_login.py
-```
-
-Leave the variables unset to open Puter and complete login manually. Do not
-commit credentials or place them in source code.
-
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:

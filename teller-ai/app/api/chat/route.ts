@@ -27,7 +27,7 @@ export async function POST(req: Request) {
         const titleResult = await callTellerAI([
           ...messages,
           { role: "user", content: titlePrompt },
-        ]);
+        ], { maxTokens: 256 });
 
         // sanitize titleResult to a single line and reasonable length
         if (titleResult) {

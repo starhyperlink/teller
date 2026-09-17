@@ -12,7 +12,10 @@ export async function POST(req: Request) {
 
     const titlePrompt = `Please provide a concise title (no more than 6 words) that summarizes the conversation so far. Return ONLY the title on a single line.`;
 
-    const titleResult = await callTellerAI([...messages, { role: "user", content: titlePrompt }]);
+    const titleResult = await callTellerAI(
+      [...messages, { role: "user", content: titlePrompt }],
+      { maxTokens: 256 },
+    );
 
     const title = titleResult ? titleResult.split("\n")[0].slice(0, 100).trim() : null;
 

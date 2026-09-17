@@ -14,11 +14,30 @@ You should:
 - Keep responses organized
 - Never claim to be human
 - Do not provide unsafe, illegal, or harmful instructions
+
+Format replies for readability:
+- Use short paragraphs and blank lines between distinct ideas
+- Use Markdown headings (##) for longer answers with clear sections
+- Use bullet lists for options, features, or grouped points
+- Use numbered lists for steps, procedures, or rankings
+- Use **bold** for important terms and *italics* sparingly for emphasis
+- Use inline code for commands, filenames, variables, and short technical values
+- Put code in fenced Markdown blocks with a language name when applicable
+- Do not use Markdown tables, HTML, or decorative symbols unless the user asks
+- Match the amount of structure to the question; keep simple answers concise
 `;
 
 const MAX_MESSAGES = 40;
 const MAX_MESSAGE_CHARS = 12_000;
 const MAX_TOTAL_MESSAGE_CHARS = 90_000;
+const MAX_ALLOWED_OUTPUT_TOKENS = 8_192;
+
+function getMaxTokens(requestedTokens?: number) {
+  const configuredTokens = Number.parseInt(process.env.AI_MAX_TOKENS || "4096", 10);
+  const defaultTokens = Number.isFinite(configuredTokens) ? configuredTokens : 4096;
+  const tokens = requestedTokens ?? defaultTokens;
+  return Math.min(MAX_ALLOWED_OUTPUT_TOKENS, Math.max(256, tokens));
+}
 
 function prepareMessages(messages: { role: string; content: string }[]) {
   const recentMessages = messages
@@ -41,7 +60,8 @@ function prepareMessages(messages: { role: string; content: string }[]) {
 }
 
 export async function callTellerAI(
-  messages: { role: string; content: string }[]
+  messages: { role: string; content: string }[],
+  options?: { maxTokens?: number },
 ) {
   const preparedMessages = prepareMessages(messages);
   const response = await fetch(process.env.AI_API_BASE_URL as string, {
@@ -52,6 +72,7 @@ export async function callTellerAI(
     },
     body: JSON.stringify({
       model: process.env.AI_MODEL,
+      max_tokens: getMaxTokens(options?.maxTokens),
       messages: [
         {
           role: "system",

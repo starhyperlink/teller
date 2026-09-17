@@ -154,6 +154,7 @@ export default function ChatWindow() {
   const [copiedMessage, setCopiedMessage] = useState<number | null>(null);
   const [isMounted, setIsMounted] = useState(false);
   const [isLocalTestAccount, setIsLocalTestAccount] = useState(false);
+  const puterLoginStartedRef = useRef(false);
   const { user, isAuthenticated, isLoading: isAuthLoading, loginWithRedirect, logout, getAccessTokenSilently } = useAuth0();
   const authReady = isMounted && !isAuthLoading;
   const hasSession = authReady && (isAuthenticated || isLocalTestAccount);
@@ -182,6 +183,19 @@ export default function ChatWindow() {
     script.async = true;
     document.head.appendChild(script);
   }, []);
+
+  useEffect(() => {
+    if (isAuthLoading || !isAuthenticated || puterLoginStartedRef.current) return;
+    puterLoginStartedRef.current = true;
+    void waitForPuter()
+      .then((puter) => {
+        if (puter.auth && !puter.auth.isSignedIn()) {
+          return puter.auth.signIn();
+        }
+        return undefined;
+      })
+      .catch(() => undefined);
+  }, [isAuthLoading, isAuthenticated]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -737,8 +751,8 @@ export default function ChatWindow() {
 
       {isSidebarOpen && <div className="fixed inset-0 z-30 bg-black/50 md:hidden" onClick={() => setIsSidebarOpen(false)} aria-hidden />}
 
-      <main className="flex min-w-0 flex-1 flex-col">
-        <header className="border-b border-neutral-800 p-4">
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <header className="sticky top-0 z-30 shrink-0 border-b border-neutral-800 bg-neutral-950/95 p-4 backdrop-blur-md">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <button className="rounded-md bg-neutral-800 px-3 py-2 text-sm md:hidden" onClick={() => setIsSidebarOpen((s) => !s)} aria-label="Toggle sidebar">Menu</button>
@@ -778,7 +792,7 @@ export default function ChatWindow() {
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto p-4 modern-scroll">
+        <div className="min-h-0 flex-1 overflow-y-auto p-4 modern-scroll">
           <div className="mx-auto min-w-0 max-w-3xl space-y-4">
             {messages.map((message, index) => (
               message.role === "user" && message.file ? null :
