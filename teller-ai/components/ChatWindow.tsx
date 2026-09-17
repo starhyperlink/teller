@@ -174,7 +174,7 @@ export default function ChatWindow() {
   }, [getAccessTokenSilently, isAuthLoading, isAuthenticated]);
 
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (isAuthLoading || !isAuthenticated) return;
     getAccessTokenSilently()
       .then((token) => fetch("/api/account", { headers: { Authorization: `Bearer ${token}` } }))
       .then((response) => (response.ok ? response.json() : null))
@@ -187,7 +187,7 @@ export default function ChatWindow() {
         }
       })
       .catch(() => undefined);
-  }, [getAccessTokenSilently, isAuthenticated]);
+  }, [getAccessTokenSilently, isAuthLoading, isAuthenticated]);
 
   // Persist active history whenever messages change
   useEffect(() => {
