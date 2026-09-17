@@ -36,7 +36,7 @@ export default function SettingsPage() {
   }, [preferencesKey]);
 
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (isLoading || !isAuthenticated) return;
     const loadAccount = async () => {
       try {
         const token = await getAccessTokenSilently();
@@ -55,7 +55,7 @@ export default function SettingsPage() {
     void loadAccount();
     window.addEventListener("focus", loadAccount);
     return () => window.removeEventListener("focus", loadAccount);
-  }, [getAccessTokenSilently, isAuthenticated]);
+  }, [getAccessTokenSilently, isAuthenticated, isLoading]);
 
   function saveSettings() {
     localStorage.setItem(
