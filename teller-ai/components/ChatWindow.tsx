@@ -1,11 +1,12 @@
 "use client";
 
 import { useAuth0 } from "@auth0/auth0-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 type Message = {
   role: "user" | "assistant";
   content: string;
+  imageUrl?: string;
   file?: {
     name: string;
     type: string;
@@ -23,6 +24,106 @@ type HistoryItem = {
 };
 
 type Theme = "auto" | "dark" | "light";
+
+declare global {
+  interface Window {
+    puter?: {
+      ai?: {
+        txt2img: (
+          prompt: string,
+          options?: {
+            model?: string;
+            quality?: string;
+            ratio?: { w: number; h: number };
+            test_mode?: boolean;
+            input_image?: string;
+            input_image_mime_type?: string;
+          },
+        ) => Promise<unknown>;
+      };
+    };
+  }
+}
+
+const localTestAccountEnabled = process.env.NEXT_PUBLIC_LOCAL_TEST_ACCOUNT_ENABLED !== "false";
+
+function isImageAttachment(file: Message["file"]) {
+  if (!file) return false;
+  return file.type.startsWith("image/") || /\.(avif|gif|jpe?g|png|svg|webp)$/i.test(file.name);
+}
+
+const imagePromptPattern = /\b(generate|create|draw|make|render|design)\b.{0,40}\b(image|picture|illustration|artwork|photo|logo)\b|\b(image|picture|illustration|artwork|photo|logo)\b.{0,40}\b(generate|create|draw|make|render|design)\b/i;
+
+function waitForPuter(timeoutMs = 10000) {
+  if (window.puter?.ai?.txt2img) return Promise.resolve(window.puter);
+  return new Promise<NonNullable<Window["puter"]>>((resolve, reject) => {
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => {
+      if (window.puter?.ai?.txt2img) {
+        window.clearInterval(timer);
+        resolve(window.puter);
+      } else if (Date.now() - startedAt >= timeoutMs) {
+        window.clearInterval(timer);
+        reject(new Error("Puter image generation is unavailable. Check your connection and try again."));
+      }
+    }, 100);
+  });
+}
+
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "object" && error !== null && "message" in error && typeof error.message === "string") {
+    return error.message;
+  }
+  return "The request failed.";
+}
+
+function renderInlineMarkdown(text: string): ReactNode[] {
+  return text.split(/(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*|\[[^\]]+\]\([^\s)]+\))/g).map((part, index) => {
+    if (part.startsWith("`") && part.endsWith("`")) {
+      return <code key={index} className="rounded bg-black/25 px-1.5 py-0.5 font-mono text-[0.9em] text-emerald-200">{part.slice(1, -1)}</code>;
+    }
+    if (part.startsWith("**") && part.endsWith("**")) return <strong key={index}>{part.slice(2, -2)}</strong>;
+    if (part.startsWith("*") && part.endsWith("*")) return <em key={index}>{part.slice(1, -1)}</em>;
+    const link = part.match(/^\[([^\]]+)\]\(([^\s)]+)\)$/);
+    if (link) return <a key={index} href={link[2]} target="_blank" rel="noreferrer" className="text-sky-300 underline underline-offset-2">{link[1]}</a>;
+    return <span key={index}>{part}</span>;
+  });
+}
+
+function FormattedMessage({ content, onCopyCode, showCodeCopy = true }: { content: string; onCopyCode: (code: string) => void; showCodeCopy?: boolean }) {
+  const blocks = content.split(/```([\w+-]*)\n?([\s\S]*?)```/g);
+  const output: ReactNode[] = [];
+
+  for (let index = 0; index < blocks.length; index += 3) {
+    const text = blocks[index];
+    if (text) {
+      text.split("\n").forEach((line, lineIndex) => {
+        const heading = line.match(/^(#{1,3})\s+(.+)$/);
+        const bullet = line.match(/^\s*[-*]\s+(.+)$/);
+        const numbered = line.match(/^\s*\d+\.\s+(.+)$/);
+        if (heading) output.push(<h3 key={`${index}-${lineIndex}`} className="mt-3 text-base font-semibold text-white">{renderInlineMarkdown(heading[2])}</h3>);
+        else if (bullet) output.push(<div key={`${index}-${lineIndex}`} className="pl-4 before:mr-2 before:content-['•']">{renderInlineMarkdown(bullet[1])}</div>);
+        else if (numbered) output.push(<div key={`${index}-${lineIndex}`} className="pl-4">{renderInlineMarkdown(line.trim())}</div>);
+        else output.push(<span key={`${index}-${lineIndex}`}>{renderInlineMarkdown(line)}{lineIndex < text.split("\n").length - 1 && <br />}</span>);
+      });
+    }
+    if (index + 1 < blocks.length) {
+      const language = blocks[index + 1] || "code";
+      const code = blocks[index + 2].trim();
+      output.push(
+        <div key={`code-${index}`} className="my-3 overflow-hidden rounded-lg border border-neutral-700 bg-neutral-950">
+          <div className="flex items-center justify-between border-b border-neutral-700 px-3 py-2 text-xs text-neutral-400">
+            <span>{language}</span>
+            {showCodeCopy && <button type="button" onClick={() => onCopyCode(code)} className="rounded bg-neutral-800 px-2 py-1 text-xs text-neutral-200 hover:bg-neutral-700">Copy code</button>}
+          </div>
+          <pre className="overflow-x-auto p-3 text-xs leading-6 text-emerald-100"><code>{code}</code></pre>
+        </div>,
+      );
+    }
+  }
+  return output;
+}
 
 export default function ChatWindow() {
   const [messages, setMessages] = useState<Message[]>([
@@ -46,18 +147,37 @@ export default function ChatWindow() {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [theme, setTheme] = useState<Theme>("auto");
   const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
+  const [copiedMessage, setCopiedMessage] = useState<number | null>(null);
+  const [isMounted, setIsMounted] = useState(false);
+  const [isLocalTestAccount, setIsLocalTestAccount] = useState(false);
   const { user, isAuthenticated, isLoading: isAuthLoading, loginWithRedirect, logout, getAccessTokenSilently } = useAuth0();
+  const authReady = isMounted && !isAuthLoading;
+  const hasSession = authReady && (isAuthenticated || isLocalTestAccount);
   const [monthlyChatCount, setMonthlyChatCount] = useState(0);
   const [planName, setPlanName] = useState("Free");
   const [usageLimit, setUsageLimit] = useState(100);
   const accountProfile = {
-    name: user?.name || "Teller User",
-    email: user?.email || "user@example.com",
+    name: isLocalTestAccount ? "Local Test Account" : user?.name || "Teller User",
+    email: isLocalTestAccount ? "local-test@teller.dev" : user?.email || "user@example.com",
     picture:
       user?.picture ||
       "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=200&q=80",
     isAuthenticated,
   };
+
+  useEffect(() => {
+    setIsMounted(true);
+    if (localTestAccountEnabled) {
+      setIsLocalTestAccount(localStorage.getItem("teller_local_test_account") === "true");
+    }
+    const scriptId = "puter-js";
+    if (document.getElementById(scriptId)) return;
+    const script = document.createElement("script");
+    script.id = scriptId;
+    script.src = "https://js.puter.com/v2/";
+    script.async = true;
+    document.head.appendChild(script);
+  }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -110,6 +230,25 @@ export default function ChatWindow() {
             "Hi, I’m Teller AI. Ask me anything — I can help with research, writing, business, coding, summaries, and ideas.",
         },
       ]);
+      if (isLocalTestAccount) {
+        try {
+          const stored = localStorage.getItem("teller_local_history");
+          const localHistories = stored ? (JSON.parse(stored) as HistoryItem[]) : [];
+          if (localHistories.length) {
+            setHistories(localHistories);
+            setActiveHistoryId(localHistories[0].id);
+            setMessages(localHistories[0].messages);
+          } else {
+            createNewChat();
+          }
+          setMonthlyChatCount(Number(localStorage.getItem("teller_local_usage") || 0));
+        } catch {
+          setHistories([]);
+        }
+        historyHydratedRef.current = true;
+        return;
+      }
+
       if (!isAuthenticated) {
         const initialMessages: Message[] = [
           {
@@ -171,7 +310,7 @@ export default function ChatWindow() {
         });
       // eslint-disable-next-line no-empty
     } catch (e) {}
-  }, [getAccessTokenSilently, isAuthLoading, isAuthenticated]);
+  }, [getAccessTokenSilently, isAuthLoading, isAuthenticated, isLocalTestAccount]);
 
   useEffect(() => {
     if (isAuthLoading || !isAuthenticated) return;
@@ -216,6 +355,10 @@ export default function ChatWindow() {
   }, [messages, activeHistoryId]);
 
   useEffect(() => {
+    if (isLocalTestAccount) {
+      if (historyHydratedRef.current) localStorage.setItem("teller_local_history", JSON.stringify(histories));
+      return;
+    }
     if (!isAuthenticated || !historyHydratedRef.current) return;
     let cancelled = false;
     getAccessTokenSilently()
@@ -236,7 +379,7 @@ export default function ChatWindow() {
     return () => {
       cancelled = true;
     };
-  }, [getAccessTokenSilently, histories, isAuthenticated]);
+  }, [getAccessTokenSilently, histories, isAuthenticated, isLocalTestAccount]);
 
   function createNewChat() {
     const id = Date.now().toString();
@@ -298,8 +441,10 @@ export default function ChatWindow() {
   }
 
   async function sendMessage() {
+    const hasUploadedImage = isImageAttachment(pendingFile);
     if (!input.trim()) return;
     if (monthlyChatCount >= usageLimit) return;
+    const isImageGenerationRequest = hasUploadedImage || imagePromptPattern.test(input);
 
     const userMessage: Message = {
       role: "user",
@@ -314,12 +459,52 @@ export default function ChatWindow() {
     setLoading(true);
 
     try {
+      if (isImageGenerationRequest) {
+        const puter = await waitForPuter();
+        const inputImageMimeType = pendingFile?.type || pendingFile?.dataUrl.match(/^data:([^;,]+)/)?.[1] || "image/png";
+        const result = await puter.ai.txt2img(input.trim(), {
+          model: "gpt-image-1-mini",
+          quality: "medium",
+          ratio: { w: 1, h: 1 },
+          ...(hasUploadedImage && pendingFile?.dataUrl
+            ? {
+                input_image: pendingFile.dataUrl,
+                input_image_mime_type: inputImageMimeType,
+              }
+            : {}),
+        });
+        const imageUrl = result instanceof HTMLImageElement
+          ? result.src
+          : typeof result === "string"
+            ? result
+            : typeof result === "object" && result !== null && "src" in result && typeof result.src === "string"
+              ? result.src
+              : typeof result === "object" && result !== null && "url" in result && typeof result.url === "string"
+                ? result.url
+                : null;
+        if (!imageUrl) throw new Error("Puter returned an invalid image.");
+        const assistantMessage: Message = {
+          role: "assistant",
+          content: "Here is the updated image:",
+          imageUrl,
+        };
+        setMessages([...updatedMessages, assistantMessage]);
+        if (isLocalTestAccount) {
+          const nextUsage = monthlyChatCount + 1;
+          setMonthlyChatCount(nextUsage);
+          localStorage.setItem("teller_local_usage", String(nextUsage));
+        }
+        playReplySound();
+        return;
+      }
+
       const token = isAuthenticated ? await getAccessTokenSilently() : null;
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...(isLocalTestAccount ? { "x-teller-local-test": "true" } : {}),
         },
         body: JSON.stringify({
           // include file data inline for the API if present
@@ -328,6 +513,7 @@ export default function ChatWindow() {
               return {
                 role: msg.role,
                 content: `File: ${msg.file.name} (${msg.file.type}; ${msg.file.size} bytes)\n${msg.file.dataUrl}\n${msg.content || ""}`,
+                ...(typeof msg.imageUrl === "string" ? { imageUrl: msg.imageUrl } : {}),
               };
             }
             return { role: msg.role, content: msg.content };
@@ -345,6 +531,11 @@ export default function ChatWindow() {
       if (data.reply) {
         if (isAuthenticated && !hasServerUsageCount) {
           setMonthlyChatCount((count) => count + 1);
+        }
+        if (isLocalTestAccount) {
+          const nextUsage = monthlyChatCount + 1;
+          setMonthlyChatCount(nextUsage);
+          localStorage.setItem("teller_local_usage", String(nextUsage));
         }
         const assistantMessage: Message = { role: "assistant", content: data.reply, file: null };
         setMessages([...updatedMessages, assistantMessage]);
@@ -401,11 +592,27 @@ export default function ChatWindow() {
         setMessages([...updatedMessages, { role: "assistant", content: "Sorry, something went wrong.", file: null }]);
       }
     } catch (err) {
-      setMessages([...updatedMessages, { role: "assistant", content: "Network error. Please try again.", file: null }]);
+      const errorMessage = isImageGenerationRequest
+        ? `Image generation failed: ${getErrorMessage(err)}`
+        : "Network error. Please try again.";
+      setMessages([...updatedMessages, { role: "assistant", content: errorMessage, file: null }]);
     } finally {
       setLoading(false);
       setPendingFile(null);
     }
+  }
+
+  async function copyText(text: string, index: number) {
+    await navigator.clipboard.writeText(text);
+    setCopiedMessage(index);
+    window.setTimeout(() => setCopiedMessage((current) => current === index ? null : current), 1400);
+  }
+
+  function editMessage(message: Message, index: number) {
+    setMessages(messages.slice(0, index));
+    setInput(message.content);
+    setPendingFile(message.file || null);
+    window.setTimeout(() => document.querySelector<HTMLInputElement>("input[placeholder='Ask Teller AI anything...']")?.focus(), 0);
   }
 
   return (
@@ -413,8 +620,8 @@ export default function ChatWindow() {
       <aside className={`fixed inset-y-0 left-0 z-40 w-72 transform border-r border-neutral-800 bg-neutral-900 p-4 transition-transform duration-200 md:static md:translate-x-0 ${isHistoryVisible ? 'md:block' : 'md:hidden'} ${isSidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}`} aria-hidden={!isSidebarOpen && true}>
         <div className="flex h-full flex-col">
           <div className="mb-4">
-            <h1 className="mb-2 flex items-center justify-between text-2xl font-bold">
-              Teller AI
+            <h1 className="mb-2 flex items-center justify-between gap-2 text-2xl font-bold">
+              <span>Teller AI</span>
               <button className="ml-2 rounded bg-neutral-800 px-2 py-1 text-sm md:hidden" onClick={() => setIsSidebarOpen(false)} aria-label="Close sidebar">
                 ✕
               </button>
@@ -429,7 +636,7 @@ export default function ChatWindow() {
             {/* Titles are generated automatically after the first assistant reply; removed manual button */}
           </div>
 
-          {isAuthenticated && (
+          {hasSession && (
             <div className="overflow-y-auto flex-1 space-y-2 text-sm text-neutral-400 modern-scroll">
               {histories.length === 0 && <p>No chats yet</p>}
 
@@ -450,7 +657,7 @@ export default function ChatWindow() {
           <div className="mt-4 border-t border-neutral-800 pt-3">
             {isAuthLoading ? (
               <div className="px-3 py-2 text-sm text-neutral-400">Loading account...</div>
-            ) : isAuthenticated ? (
+            ) : hasSession ? (
               <>
                 <button onClick={() => setIsProfileOpen((s) => !s)} className="flex w-full items-center gap-3 rounded-md px-3 py-2 hover:bg-neutral-800">
                   <img
@@ -469,7 +676,14 @@ export default function ChatWindow() {
                   <div className="mt-2 space-y-2 text-sm">
                     <button type="button" onClick={openUserPanel} className="w-full rounded px-3 py-2 text-left hover:bg-neutral-800">Account Settings</button>
                     <button type="button" onClick={() => loginWithRedirect()} className="w-full rounded px-3 py-2 text-left hover:bg-neutral-800">Switch account</button>
-                    <button type="button" onClick={() => logout({ logoutParams: { returnTo: typeof window !== "undefined" ? window.location.origin : undefined } })} className="w-full rounded px-3 py-2 text-left hover:bg-neutral-800">Log out</button>
+                    <button type="button" onClick={() => {
+                      if (isLocalTestAccount) {
+                        localStorage.removeItem("teller_local_test_account");
+                        setIsLocalTestAccount(false);
+                      } else {
+                        void logout({ logoutParams: { returnTo: typeof window !== "undefined" ? window.location.origin : undefined } });
+                      }
+                    }} className="w-full rounded px-3 py-2 text-left hover:bg-neutral-800">Log out</button>
                   </div>
                 )}
               </>
@@ -478,7 +692,7 @@ export default function ChatWindow() {
                 Log in
               </button>
             )}
-            {isAuthenticated && (
+            {hasSession && (
               <div className="mt-3 px-3 text-xs text-neutral-400">
                 {planName} plan: {monthlyChatCount}/{usageLimit} chats this month
               </div>
@@ -544,7 +758,20 @@ export default function ChatWindow() {
                     )}
                   </div>
                 )}
-                <p className="whitespace-pre-wrap">{message.content}</p>
+                {message.imageUrl && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={message.imageUrl} alt="Generated by Teller AI" className="mb-2 max-h-[32rem] w-auto rounded-lg" />
+                )}
+                <div className="text-sm leading-7">
+                  <FormattedMessage content={message.content} showCodeCopy={message.role === "assistant"} onCopyCode={(code) => void copyText(code, index)} />
+                </div>
+                <div className="mt-3 flex gap-2 border-t border-white/10 pt-2 opacity-70">
+                  {message.role === "assistant" ? (
+                    <button type="button" onClick={() => void copyText(message.content, index)} className="text-xs text-neutral-300 hover:text-white">{copiedMessage === index ? "Copied" : "Copy"}</button>
+                  ) : (
+                    <button type="button" onClick={() => editMessage(message, index)} className="text-xs text-neutral-300 hover:text-white">Edit</button>
+                  )}
+                </div>
               </div>
             ))}
 
@@ -558,7 +785,7 @@ export default function ChatWindow() {
 
         <div className="border-t border-neutral-800 p-4">
           <div className="mx-auto max-w-3xl">
-            {isAuthenticated ? (
+            {hasSession ? (
               <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2">
                 <label className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-lg bg-neutral-800 text-xl" title="Attach file">
                   <input type="file" className="hidden" onChange={async (e) => {
@@ -579,9 +806,19 @@ export default function ChatWindow() {
                 <button onClick={sendMessage} disabled={loading} className="shrink-0 rounded-lg bg-white px-5 py-3 font-medium text-black disabled:opacity-50">Send</button>
               </div>
             ) : (
-              <button type="button" onClick={() => loginWithRedirect()} className="w-full rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-3 text-sm text-neutral-300 hover:bg-neutral-800">
-                Log in to attach files and send messages
-              </button>
+              <div className="space-y-2">
+                <button type="button" onClick={() => loginWithRedirect()} className="w-full rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-3 text-sm text-neutral-300 hover:bg-neutral-800">
+                  Log in to attach files and send messages
+                </button>
+                {localTestAccountEnabled && (
+                  <button type="button" onClick={() => {
+                    localStorage.setItem("teller_local_test_account", "true");
+                    setIsLocalTestAccount(true);
+                  }} className="w-full rounded-lg border border-emerald-700/60 bg-emerald-950/30 px-4 py-3 text-sm text-emerald-200 hover:bg-emerald-950/50">
+                    Use local test account
+                  </button>
+                )}
+              </div>
             )}
           </div>
           {pendingFile && (

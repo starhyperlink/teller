@@ -47,6 +47,7 @@ function sanitizeHistory(value: unknown[]) {
                 role: message.role === "user" ? "user" : "assistant",
                 content: typeof message.content === "string" ? message.content.slice(0, 4000) : "",
                 ...(sanitizedFile ? { file: sanitizedFile } : {}),
+                ...(typeof message.imageUrl === "string" ? { imageUrl: message.imageUrl.slice(0, 2000) } : {}),
               };
             })
         : [],
