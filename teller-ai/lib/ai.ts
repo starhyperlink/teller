@@ -16,9 +16,34 @@ You should:
 - Do not provide unsafe, illegal, or harmful instructions
 `;
 
+const MAX_MESSAGES = 40;
+const MAX_MESSAGE_CHARS = 12_000;
+const MAX_TOTAL_MESSAGE_CHARS = 90_000;
+
+function prepareMessages(messages: { role: string; content: string }[]) {
+  const recentMessages = messages
+    .filter((message) => message && typeof message.content === "string")
+    .slice(-MAX_MESSAGES)
+    .map((message) => ({
+      role: message.role === "assistant" ? "assistant" : "user",
+      content: message.content.slice(0, MAX_MESSAGE_CHARS),
+    }));
+
+  let totalChars = 0;
+  const boundedMessages = [];
+  for (let index = recentMessages.length - 1; index >= 0; index -= 1) {
+    const message = recentMessages[index];
+    if (totalChars + message.content.length > MAX_TOTAL_MESSAGE_CHARS) break;
+    boundedMessages.unshift(message);
+    totalChars += message.content.length;
+  }
+  return boundedMessages;
+}
+
 export async function callTellerAI(
   messages: { role: string; content: string }[]
 ) {
+  const preparedMessages = prepareMessages(messages);
   const response = await fetch(process.env.AI_API_BASE_URL as string, {
     method: "POST",
     headers: {
@@ -32,7 +57,7 @@ export async function callTellerAI(
           role: "system",
           content: TELLER_AI_SYSTEM_PROMPT,
         },
-        ...messages,
+        ...preparedMessages,
       ],
       temperature: 0.7,
     }),

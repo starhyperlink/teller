@@ -119,7 +119,7 @@ function FormattedMessage({ content, onCopyCode, showCodeCopy = true }: { conten
         <div key={`code-${index}`} className="my-3 overflow-hidden rounded-lg border border-neutral-700 bg-neutral-950">
           <div className="flex items-center justify-between border-b border-neutral-700 px-3 py-2 text-xs text-neutral-400">
             <span>{language}</span>
-            {showCodeCopy && <button type="button" onClick={() => onCopyCode(code)} className="rounded bg-neutral-800 px-2 py-1 text-xs text-neutral-200 hover:bg-neutral-700">Copy code</button>}
+            {showCodeCopy && <button type="button" onClick={() => onCopyCode(code)} className="rounded bg-neutral-800 px-2 py-1 text-xl leading-none text-neutral-200 hover:bg-neutral-700" aria-label="Copy code" title="Copy code">⧉</button>}
           </div>
           <pre className="overflow-x-auto p-3 text-xs leading-6 text-emerald-100"><code>{code}</code></pre>
         </div>,
@@ -524,12 +524,11 @@ export default function ChatWindow() {
           ...(isLocalTestAccount ? { "x-teller-local-test": "true" } : {}),
         },
         body: JSON.stringify({
-          // include file data inline for the API if present
           messages: updatedMessages.map((msg) => {
             if (msg.file) {
               return {
                 role: msg.role,
-                content: `File: ${msg.file.name} (${msg.file.type}; ${msg.file.size} bytes)\n${msg.file.dataUrl}\n${msg.content || ""}`,
+                content: `${msg.content || ""}\n[Attachment: ${msg.file.name} (${msg.file.type}; ${msg.file.size} bytes)]`,
                 ...(typeof msg.imageUrl === "string" ? { imageUrl: msg.imageUrl } : {}),
               };
             }
@@ -586,7 +585,17 @@ export default function ChatWindow() {
                 const res = await fetch("/api/title", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ messages: [...updatedMessages, { role: "assistant", content: data.reply }] }),
+                  body: JSON.stringify({
+                    messages: [
+                      ...updatedMessages.map((msg) => ({
+                        role: msg.role,
+                        content: msg.file
+                          ? `${msg.content || ""}\n[Attachment: ${msg.file.name} (${msg.file.type}; ${msg.file.size} bytes)]`
+                          : msg.content,
+                      })),
+                      { role: "assistant", content: data.reply },
+                    ],
+                  }),
                 });
                 const d = await res.json();
                 if (d.title) {
@@ -626,7 +635,15 @@ export default function ChatWindow() {
   }
 
   function editMessage(message: Message, index: number) {
-    setMessages(messages.slice(0, index));
+    const editedMessages = messages.slice(0, index);
+    setMessages(editedMessages);
+    if (activeHistoryId) {
+      setHistories((previous) => previous.map((history) => (
+        history.id === activeHistoryId
+          ? { ...history, messages: editedMessages, updatedAt: Date.now() }
+          : history
+      )));
+    }
     setInput(message.content);
     setPendingFile(message.file || null);
     window.setTimeout(() => document.querySelector<HTMLInputElement>("input[placeholder='Ask Teller AI anything...']")?.focus(), 0);
@@ -720,7 +737,7 @@ export default function ChatWindow() {
 
       {isSidebarOpen && <div className="fixed inset-0 z-30 bg-black/50 md:hidden" onClick={() => setIsSidebarOpen(false)} aria-hidden />}
 
-      <main className="flex flex-1 flex-col">
+      <main className="flex min-w-0 flex-1 flex-col">
         <header className="border-b border-neutral-800 p-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -728,7 +745,7 @@ export default function ChatWindow() {
               <button className="hidden items-center gap-2 rounded-md bg-neutral-800 px-3 py-2 text-sm md:inline-flex" onClick={() => setIsHistoryVisible((v) => !v)} aria-label="Toggle history visibility">
                 Menu
               </button>
-              <h2 className="text-lg font-semibold">Teller AI Chat</h2>
+              <img src="/jupiter-black.svg" alt="Teller AI" className="h-8 w-8 object-contain" />
             </div>
             <div className="relative">
               <button
@@ -762,38 +779,36 @@ export default function ChatWindow() {
         </header>
 
         <div className="flex-1 overflow-y-auto p-4 modern-scroll">
-          <div className="mx-auto max-w-3xl space-y-4">
+          <div className="mx-auto min-w-0 max-w-3xl space-y-4">
             {messages.map((message, index) => (
-              <div key={index} className={`max-w-[85%] rounded-xl p-4 ${message.role === "user" ? "ml-auto bg-blue-600" : "mr-auto bg-neutral-800"}`}>
-                {message.file && (
-                  <div className="mb-2">
-                    {message.file.type.startsWith("image/") ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={message.file.dataUrl} alt={message.file.name} className="max-h-48 w-auto rounded" />
-                    ) : (
-                      <a href={message.file.dataUrl} download={message.file.name} className="underline">Download {message.file.name}</a>
-                    )}
+              message.role === "user" && message.file ? null :
+              <div key={index} className={`min-w-0 max-w-[85%] overflow-hidden rounded-xl p-4 [overflow-wrap:anywhere] ${message.role === "user" ? "ml-auto bg-blue-600" : "mr-auto bg-neutral-800"}`}>
+                {message.imageUrl && (
+                  <div className="mb-3 overflow-hidden rounded-2xl border border-white/25 bg-white/10 p-2 shadow-[0_8px_32px_rgba(0,0,0,0.2)] backdrop-blur-xl">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={message.imageUrl} alt="Generated by Teller AI" className="max-h-[32rem] max-w-full rounded-xl object-contain" />
                   </div>
                 )}
-                {message.imageUrl && (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={message.imageUrl} alt="Generated by Teller AI" className="mb-2 max-h-[32rem] w-auto rounded-lg" />
-                )}
-                <div className="text-sm leading-7">
+                <div className="min-w-0 max-w-full text-sm leading-7 [overflow-wrap:anywhere]">
                   <FormattedMessage content={message.content} showCodeCopy={message.role === "assistant"} onCopyCode={(code) => void copyText(code, index)} />
                 </div>
                 <div className="mt-3 flex gap-2 border-t border-white/10 pt-2 opacity-70">
                   {message.role === "assistant" ? (
-                    <button type="button" onClick={() => void copyText(message.content, index)} className="text-xs text-neutral-300 hover:text-white">{copiedMessage === index ? "Copied" : "Copy"}</button>
+                    <>
+                      <button type="button" onClick={() => void copyText(message.content, index)} className="rounded px-1 text-xl leading-none text-neutral-300 hover:text-white" aria-label={copiedMessage === index ? "Copied" : "Copy message"} title={copiedMessage === index ? "Copied" : "Copy message"}>{copiedMessage === index ? "✓" : "⧉"}</button>
+                      {message.imageUrl && (
+                        <a href={message.imageUrl} download="teller-generated-image.png" className="rounded px-1 text-xl leading-none text-neutral-300 hover:text-white" aria-label="Download image" title="Download image">⇩</a>
+                      )}
+                    </>
                   ) : (
-                    <button type="button" onClick={() => editMessage(message, index)} className="text-xs text-neutral-300 hover:text-white">Edit</button>
+                    <button type="button" onClick={() => editMessage(message, index)} className="rounded px-1 text-xl leading-none text-neutral-300 hover:text-white" aria-label="Edit message" title="Edit message">✎</button>
                   )}
                 </div>
               </div>
             ))}
 
             {loading && (
-              <div className="mr-auto max-w-[85%] rounded-xl bg-neutral-800 p-4">Teller AI is thinking...</div>
+              <div className="mr-auto max-w-[85%] rounded-xl bg-neutral-800 p-4 [overflow-wrap:anywhere]">Teller AI is thinking...</div>
             )}
 
             <div ref={messagesEndRef} />
