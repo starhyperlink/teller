@@ -1,11 +1,4 @@
 const auth0Domain = process.env.NEXT_PUBLIC_AUTH0_DOMAIN;
-const localTestAccountId = process.env.LOCAL_TEST_ACCOUNT_ID || "local-test-account";
-
-export function isLocalTestAccountRequest(request: Request) {
-  return process.env.NODE_ENV !== "production" &&
-    process.env.LOCAL_TEST_ACCOUNT_ENABLED !== "false" &&
-    request.headers.get("x-teller-local-test") === "true";
-}
 
 function getManagementApiUrl(path: string) {
   if (!auth0Domain) throw new Error("NEXT_PUBLIC_AUTH0_DOMAIN is not configured.");
@@ -78,8 +71,6 @@ export async function updateAuth0Usage(userId: string, usageCount: number, usage
 }
 
 export async function getAuthenticatedUserId(request: Request) {
-  if (isLocalTestAccountRequest(request)) return localTestAccountId;
-
   const authorization = request.headers.get("authorization");
   if (!authorization?.startsWith("Bearer ") || !auth0Domain) return null;
 

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { callTellerAI } from "@/lib/ai";
-import { getAuthenticatedUserId, isLocalTestAccountRequest } from "@/lib/auth0-management";
+import { getAuthenticatedUserId } from "@/lib/auth0-management";
 import { incrementUserUsage } from "@/lib/postgres";
 
 export const runtime = "nodejs";
@@ -37,7 +37,7 @@ export async function POST(req: Request) {
         // ignore title errors
       }
 
-      const usageCount = userId && !isLocalTestAccountRequest(req)
+      const usageCount = userId
         ? await incrementUserUsage(userId)
         : null;
       return NextResponse.json({ reply, title, usageCount });

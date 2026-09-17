@@ -49,8 +49,6 @@ declare global {
   }
 }
 
-const localTestAccountEnabled = process.env.NEXT_PUBLIC_LOCAL_TEST_ACCOUNT_ENABLED !== "false";
-
 function isImageAttachment(file: Message["file"]) {
   if (!file) return false;
   return file.type.startsWith("image/") || /\.(avif|gif|jpe?g|png|svg|webp)$/i.test(file.name);
@@ -153,17 +151,16 @@ export default function ChatWindow() {
   const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
   const [copiedMessage, setCopiedMessage] = useState<number | null>(null);
   const [isMounted, setIsMounted] = useState(false);
-  const [isLocalTestAccount, setIsLocalTestAccount] = useState(false);
   const puterLoginStartedRef = useRef(false);
   const { user, isAuthenticated, isLoading: isAuthLoading, loginWithRedirect, logout, getAccessTokenSilently } = useAuth0();
   const authReady = isMounted && !isAuthLoading;
-  const hasSession = authReady && (isAuthenticated || isLocalTestAccount);
+  const hasSession = authReady && isAuthenticated;
   const [monthlyChatCount, setMonthlyChatCount] = useState(0);
   const [planName, setPlanName] = useState("Free");
   const [usageLimit, setUsageLimit] = useState(100);
   const accountProfile = {
-    name: isLocalTestAccount ? "Local Test Account" : user?.name || "Teller User",
-    email: isLocalTestAccount ? "local-test@teller.dev" : user?.email || "user@example.com",
+    name: user?.name || "Teller User",
+    email: user?.email || "user@example.com",
     picture:
       user?.picture ||
       "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=200&q=80",
@@ -172,9 +169,6 @@ export default function ChatWindow() {
 
   useEffect(() => {
     setIsMounted(true);
-    if (localTestAccountEnabled) {
-      setIsLocalTestAccount(localStorage.getItem("teller_local_test_account") === "true");
-    }
     const scriptId = "puter-js";
     if (document.getElementById(scriptId)) return;
     const script = document.createElement("script");
@@ -248,25 +242,6 @@ export default function ChatWindow() {
             "Hi, I’m Teller AI. Ask me anything — I can help with research, writing, business, coding, summaries, and ideas.",
         },
       ]);
-      if (isLocalTestAccount) {
-        try {
-          const stored = localStorage.getItem("teller_local_history");
-          const localHistories = stored ? (JSON.parse(stored) as HistoryItem[]) : [];
-          if (localHistories.length) {
-            setHistories(localHistories);
-            setActiveHistoryId(localHistories[0].id);
-            setMessages(localHistories[0].messages);
-          } else {
-            createNewChat();
-          }
-          setMonthlyChatCount(Number(localStorage.getItem("teller_local_usage") || 0));
-        } catch {
-          setHistories([]);
-        }
-        historyHydratedRef.current = true;
-        return;
-      }
-
       if (!isAuthenticated) {
         const initialMessages: Message[] = [
           {
@@ -328,7 +303,7 @@ export default function ChatWindow() {
         });
       // eslint-disable-next-line no-empty
     } catch (e) {}
-  }, [getAccessTokenSilently, isAuthLoading, isAuthenticated, isLocalTestAccount]);
+  }, [getAccessTokenSilently, isAuthLoading, isAuthenticated]);
 
   useEffect(() => {
     if (isAuthLoading || !isAuthenticated) return;
@@ -373,10 +348,6 @@ export default function ChatWindow() {
   }, [messages, activeHistoryId]);
 
   useEffect(() => {
-    if (isLocalTestAccount) {
-      if (historyHydratedRef.current) localStorage.setItem("teller_local_history", JSON.stringify(histories));
-      return;
-    }
     if (!isAuthenticated || !historyHydratedRef.current) return;
     let cancelled = false;
     getAccessTokenSilently()
@@ -397,7 +368,7 @@ export default function ChatWindow() {
     return () => {
       cancelled = true;
     };
-  }, [getAccessTokenSilently, histories, isAuthenticated, isLocalTestAccount]);
+  }, [getAccessTokenSilently, histories, isAuthenticated]);
 
   function createNewChat() {
     const id = Date.now().toString();
@@ -520,11 +491,6 @@ export default function ChatWindow() {
           imageUrl,
         };
         setMessages([...updatedMessages, assistantMessage]);
-        if (isLocalTestAccount) {
-          const nextUsage = monthlyChatCount + 1;
-          setMonthlyChatCount(nextUsage);
-          localStorage.setItem("teller_local_usage", String(nextUsage));
-        }
         playReplySound();
         return;
       }
@@ -535,7 +501,6 @@ export default function ChatWindow() {
         headers: {
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          ...(isLocalTestAccount ? { "x-teller-local-test": "true" } : {}),
         },
         body: JSON.stringify({
           messages: updatedMessages.map((msg) => {
@@ -561,11 +526,6 @@ export default function ChatWindow() {
       if (data.reply) {
         if (isAuthenticated && !hasServerUsageCount) {
           setMonthlyChatCount((count) => count + 1);
-        }
-        if (isLocalTestAccount) {
-          const nextUsage = monthlyChatCount + 1;
-          setMonthlyChatCount(nextUsage);
-          localStorage.setItem("teller_local_usage", String(nextUsage));
         }
         const assistantMessage: Message = { role: "assistant", content: data.reply, file: null };
         setMessages([...updatedMessages, assistantMessage]);
@@ -725,12 +685,7 @@ export default function ChatWindow() {
                     <button type="button" onClick={openUserPanel} className="w-full rounded px-3 py-2 text-left hover:bg-neutral-800">Account Settings</button>
                     <button type="button" onClick={() => loginWithRedirect()} className="w-full rounded px-3 py-2 text-left hover:bg-neutral-800">Switch account</button>
                     <button type="button" onClick={() => {
-                      if (isLocalTestAccount) {
-                        localStorage.removeItem("teller_local_test_account");
-                        setIsLocalTestAccount(false);
-                      } else {
-                        void logout({ logoutParams: { returnTo: typeof window !== "undefined" ? window.location.origin : undefined } });
-                      }
+                      void logout({ logoutParams: { returnTo: typeof window !== "undefined" ? window.location.origin : undefined } });
                     }} className="w-full rounded px-3 py-2 text-left hover:bg-neutral-800">Log out</button>
                   </div>
                 )}
@@ -856,14 +811,6 @@ export default function ChatWindow() {
                 <button type="button" onClick={() => loginWithRedirect()} className="w-full rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-3 text-sm text-neutral-300 hover:bg-neutral-800">
                   Log in to attach files and send messages
                 </button>
-                {localTestAccountEnabled && (
-                  <button type="button" onClick={() => {
-                    localStorage.setItem("teller_local_test_account", "true");
-                    setIsLocalTestAccount(true);
-                  }} className="w-full rounded-lg border border-emerald-700/60 bg-emerald-950/30 px-4 py-3 text-sm text-emerald-200 hover:bg-emerald-950/50">
-                    Use local test account
-                  </button>
-                )}
               </div>
             )}
           </div>
