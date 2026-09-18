@@ -8,10 +8,10 @@ type Quality = "low" | "medium" | "high";
 type RatioKey = "square" | "portrait" | "landscape" | "wide";
 
 const ratios: Record<RatioKey, { label: string; value: { w: number; h: number } }> = {
-  square: { label: "Square", value: { w: 1, h: 1 } },
-  portrait: { label: "Portrait", value: { w: 4, h: 5 } },
-  landscape: { label: "Landscape", value: { w: 4, h: 3 } },
-  wide: { label: "Wide", value: { w: 16, h: 9 } },
+  square: { label: "Square", value: { w: 1024, h: 1024 } },
+  portrait: { label: "Portrait", value: { w: 1024, h: 1280 } },
+  landscape: { label: "Landscape", value: { w: 1280, h: 1024 } },
+  wide: { label: "Wide", value: { w: 1536, h: 864 } },
 };
 
 const examples = [
@@ -22,7 +22,7 @@ const examples = [
 
 export default function ImageGeneratorPage() {
   const [prompt, setPrompt] = useState("");
-  const [model, setModel] = useState<ImageModel>("gpt-image-1-mini");
+  const [model, setModel] = useState<ImageModel>("gpt-image-1");
   const [quality, setQuality] = useState<Quality>("medium");
   const [ratio, setRatio] = useState<RatioKey>("square");
   const [testMode, setTestMode] = useState(true);

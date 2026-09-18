@@ -33,6 +33,10 @@ declare global {
         isSignedIn: () => boolean;
         signIn: () => Promise<unknown>;
       };
+      fs?: {
+        write: (path: string, data: Blob) => Promise<unknown>;
+        getReadURL: (path: string) => Promise<string>;
+      };
       ai?: {
         chat: (
           prompt: string,
@@ -104,6 +108,17 @@ function toImageFileName(value: string) {
     .toLowerCase()
     .slice(0, 80);
   return `${name || "teller-generated-image"}.png`;
+}
+
+async function storeImageInPuter(puter: NonNullable<Window["puter"]>, imageUrl: string, userId: string, fileName: string) {
+  if (!puter.fs) return imageUrl;
+  const imageResponse = await fetch(imageUrl);
+  if (!imageResponse.ok) throw new Error("Could not read the generated image for storage.");
+  const imageBlob = await imageResponse.blob();
+  const safeUserId = userId.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const path = `teller/${safeUserId}/images/${Date.now()}-${fileName}`;
+  await puter.fs.write(path, imageBlob);
+  return puter.fs.getReadURL(path);
 }
 
 function renderInlineMarkdown(text: string): ReactNode[] {
@@ -504,9 +519,9 @@ export default function ChatWindow() {
         const inputImageMimeType = pendingFile?.type || pendingFile?.dataUrl.match(/^data:([^;,]+)/)?.[1] || "image/png";
         const sourceImageUrl = hasUploadedImage ? pendingFile?.dataUrl : latestImageMessage?.imageUrl;
         const result = await ai.txt2img(input.trim(), {
-          model: "gpt-image-1-mini",
+          model: "gpt-image-1",
           quality: "medium",
-          ratio: { w: 1, h: 1 },
+          ratio: { w: 1024, h: 1024 },
           ...(sourceImageUrl
             ? {
                 input_image: sourceImageUrl,
@@ -524,35 +539,22 @@ export default function ChatWindow() {
                 ? result.url
                 : null;
         if (!imageUrl) throw new Error("Puter returned an invalid image.");
-          const token = isAuthenticated ? await getAccessTokenSilently() : null;
-          let storedImageUrl = imageUrl;
-          if (token) {
-            const uploadResponse = await fetch("/api/images/upload", {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${token}`,
-              },
-              body: JSON.stringify({ imageUrl }),
-            });
-            const uploadData = await uploadResponse.json();
-            if (!uploadResponse.ok || typeof uploadData.imageUrl !== "string") {
-              throw new Error(uploadData.error || "Could not save the generated image.");
-            }
-            storedImageUrl = uploadData.imageUrl;
-          }
           let imageFileName = "teller-generated-image.png";
           if (ai.chat) {
             try {
               const analysis = await ai.chat(
                 "Analyze this image and return only a short, descriptive filename for it, using lowercase words separated by hyphens and no extension.",
-                storedImageUrl,
+                imageUrl,
                 { model: "gpt-5.6-luna" },
               );
               imageFileName = toImageFileName(getPuterChatText(analysis));
             } catch {
               // Image generation should still succeed if vision analysis is unavailable.
             }
+          }
+          let storedImageUrl = imageUrl;
+          if (isAuthenticated && user?.sub) {
+            storedImageUrl = await storeImageInPuter(puter, imageUrl, user.sub, imageFileName);
           }
         const assistantMessage: Message = {
           role: "assistant",
@@ -698,9 +700,9 @@ export default function ChatWindow() {
       <aside className={`fixed inset-y-0 left-0 z-40 w-72 transform border-r border-neutral-800 bg-neutral-900 p-4 transition-transform duration-200 md:static md:translate-x-0 ${isHistoryVisible ? 'md:block' : 'md:hidden'} ${isSidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}`} aria-hidden={!isSidebarOpen && true}>
         <div className="flex h-full flex-col">
           <div className="mb-4">
-            <h1 className="mb-2 flex items-center justify-between gap-2 text-2xl font-bold">
-              <span>Teller AI</span>
-              <button className="ml-2 rounded bg-neutral-800 px-2 py-1 text-sm md:hidden" onClick={() => setIsSidebarOpen(false)} aria-label="Close sidebar">
+            <h1 className="relative mb-2 flex items-center justify-center text-2xl font-bold">
+              <img src="/jupiter-black.svg" alt="Jupiter" className="h-16 w-16 object-contain" />
+              <button className="absolute right-0 rounded bg-neutral-800 px-2 py-1 text-sm md:hidden" onClick={() => setIsSidebarOpen(false)} aria-label="Close sidebar">
                 ✕
               </button>
             </h1>
