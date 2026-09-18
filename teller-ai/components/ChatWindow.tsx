@@ -7,6 +7,7 @@ type Message = {
   role: "user" | "assistant";
   content: string;
   imageUrl?: string;
+  imageFileName?: string;
   file?: {
     name: string;
     type: string;
@@ -33,6 +34,11 @@ declare global {
         signIn: () => Promise<unknown>;
       };
       ai?: {
+        chat: (
+          prompt: string,
+          imageUrl?: string,
+          options?: { model?: string },
+        ) => Promise<unknown>;
         txt2img: (
           prompt: string,
           options?: {
@@ -78,6 +84,26 @@ function getErrorMessage(error: unknown) {
     return error.message;
   }
   return "The request failed.";
+}
+
+function getPuterChatText(result: unknown) {
+  if (typeof result === "string") return result.trim();
+  if (typeof result !== "object" || result === null) return "";
+  if ("message" in result && typeof result.message === "object" && result.message !== null && "content" in result.message && typeof result.message.content === "string") {
+    return result.message.content.trim();
+  }
+  if ("content" in result && typeof result.content === "string") return result.content.trim();
+  return "";
+}
+
+function toImageFileName(value: string) {
+  const name = value
+    .replace(/^\s*(filename|file name)\s*:\s*/i, "")
+    .replace(/[^a-z0-9]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase()
+    .slice(0, 80);
+  return `${name || "teller-generated-image"}.png`;
 }
 
 function renderInlineMarkdown(text: string): ReactNode[] {
@@ -158,6 +184,16 @@ export default function ChatWindow() {
   const [monthlyChatCount, setMonthlyChatCount] = useState(0);
   const [planName, setPlanName] = useState("Free");
   const [usageLimit, setUsageLimit] = useState(100);
+  const imageLibrary = histories.flatMap((history) => history.messages
+    .filter((message) => message.role === "assistant" && message.imageUrl)
+    .map((message, index) => ({
+      historyId: history.id,
+      title: history.title,
+      imageUrl: message.imageUrl as string,
+      fileName: message.imageFileName || "teller-generated-image.png",
+      key: `${history.id}-${message.imageUrl}-${index}`,
+    }))
+  );
   const accountProfile = {
     name: user?.name || "Teller User",
     email: user?.email || "user@example.com",
@@ -433,7 +469,9 @@ export default function ChatWindow() {
     const hasUploadedImage = isImageAttachment(pendingFile);
     if (!input.trim()) return;
     if (monthlyChatCount >= usageLimit) return;
-    const isImageGenerationRequest = hasUploadedImage || imagePromptPattern.test(input);
+    const latestImageMessage = [...messages].reverse().find((message) => message.role === "assistant" && message.imageUrl);
+    const isImageEditRequest = Boolean(latestImageMessage?.imageUrl && /\b(edit|change|modify|update|adjust|improve|remove|add|make it|turn it|replace)\b/i.test(input));
+    const isImageGenerationRequest = hasUploadedImage || imagePromptPattern.test(input) || isImageEditRequest;
 
     const userMessage: Message = {
       role: "user",
@@ -464,14 +502,15 @@ export default function ChatWindow() {
           await puter.auth.signIn();
         }
         const inputImageMimeType = pendingFile?.type || pendingFile?.dataUrl.match(/^data:([^;,]+)/)?.[1] || "image/png";
+        const sourceImageUrl = hasUploadedImage ? pendingFile?.dataUrl : latestImageMessage?.imageUrl;
         const result = await ai.txt2img(input.trim(), {
           model: "gpt-image-1-mini",
           quality: "medium",
           ratio: { w: 1, h: 1 },
-          ...(hasUploadedImage && pendingFile?.dataUrl
+          ...(sourceImageUrl
             ? {
-                input_image: pendingFile.dataUrl,
-                input_image_mime_type: inputImageMimeType,
+                input_image: sourceImageUrl,
+                input_image_mime_type: hasUploadedImage ? inputImageMimeType : "image/png",
               }
             : {}),
         });
@@ -485,10 +524,41 @@ export default function ChatWindow() {
                 ? result.url
                 : null;
         if (!imageUrl) throw new Error("Puter returned an invalid image.");
+          const token = isAuthenticated ? await getAccessTokenSilently() : null;
+          let storedImageUrl = imageUrl;
+          if (token) {
+            const uploadResponse = await fetch("/api/images/upload", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify({ imageUrl }),
+            });
+            const uploadData = await uploadResponse.json();
+            if (!uploadResponse.ok || typeof uploadData.imageUrl !== "string") {
+              throw new Error(uploadData.error || "Could not save the generated image.");
+            }
+            storedImageUrl = uploadData.imageUrl;
+          }
+          let imageFileName = "teller-generated-image.png";
+          if (ai.chat) {
+            try {
+              const analysis = await ai.chat(
+                "Analyze this image and return only a short, descriptive filename for it, using lowercase words separated by hyphens and no extension.",
+                storedImageUrl,
+                { model: "gpt-5.6-luna" },
+              );
+              imageFileName = toImageFileName(getPuterChatText(analysis));
+            } catch {
+              // Image generation should still succeed if vision analysis is unavailable.
+            }
+          }
         const assistantMessage: Message = {
           role: "assistant",
-          content: "Here is the updated image:",
-          imageUrl,
+            content: `Here is the updated image. Filename: ${imageFileName}`,
+            imageUrl: storedImageUrl,
+            imageFileName,
         };
         setMessages([...updatedMessages, assistantMessage]);
         playReplySound();
@@ -645,20 +715,49 @@ export default function ChatWindow() {
           </div>
 
           {hasSession && (
-            <div className="overflow-y-auto flex-1 space-y-2 text-sm text-neutral-400 modern-scroll">
-              {histories.length === 0 && <p>No chats yet</p>}
-
-              {histories.slice(0, 6).map((h) => (
-                <div key={h.id} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter') loadHistory(h.id); }} onClick={() => loadHistory(h.id)} className={`flex items-center justify-between w-full rounded-md px-3 py-2 hover:bg-neutral-800 ${h.id === activeHistoryId ? "bg-neutral-800" : ""}`}>
-                  <div className="min-w-0">
-                    <div className="truncate text-white">{h.title}</div>
-                    <div className="mt-1 text-xs text-neutral-400">{new Date(h.updatedAt).toLocaleString()}</div>
-                  </div>
-                  <div className="ml-2 flex-shrink-0">
-                    <button onClick={(e) => { e.stopPropagation(); deleteHistory(h.id); }} className="rounded px-2 py-1 text-xs bg-neutral-800">Delete</button>
-                  </div>
+            <div className="min-h-0 flex-1 overflow-y-auto space-y-5 text-sm text-neutral-400 modern-scroll">
+              <section aria-labelledby="chat-history-heading">
+                <h2 id="chat-history-heading" className="mb-2 px-1 text-xs font-semibold uppercase tracking-wider text-neutral-500">Chat history</h2>
+                {histories.length === 0 && <p className="px-1">No chats yet</p>}
+                <div className="space-y-2">
+                  {histories.slice(0, 6).map((h) => (
+                    <div key={h.id} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter') loadHistory(h.id); }} onClick={() => loadHistory(h.id)} className={`flex items-center justify-between w-full rounded-md px-3 py-2 hover:bg-neutral-800 ${h.id === activeHistoryId ? "bg-neutral-800" : ""}`}>
+                      <div className="min-w-0">
+                        <div className="truncate text-white">{h.title}</div>
+                        <div className="mt-1 text-xs text-neutral-400">{new Date(h.updatedAt).toLocaleString()}</div>
+                      </div>
+                      <div className="ml-2 flex-shrink-0">
+                        <button onClick={(e) => { e.stopPropagation(); deleteHistory(h.id); }} className="rounded px-2 py-1 text-xs bg-neutral-800">Delete</button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              </section>
+
+              <section aria-labelledby="image-library-heading">
+                <div className="mb-2 flex items-center justify-between px-1">
+                  <h2 id="image-library-heading" className="text-xs font-semibold uppercase tracking-wider text-neutral-500">Image library</h2>
+                  <span className="text-xs text-neutral-600">{imageLibrary.length}</span>
+                </div>
+                {imageLibrary.length === 0 ? (
+                  <p className="px-1 text-xs text-neutral-500">Generated images will appear here.</p>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2">
+                    {imageLibrary.map((image) => (
+                      <div key={image.key} className="group overflow-hidden rounded-lg border border-neutral-800 bg-neutral-950">
+                        <button type="button" onClick={() => loadHistory(image.historyId)} className="block w-full text-left" title={`Open ${image.title}`}>
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={image.imageUrl} alt={image.fileName} className="aspect-square w-full object-cover transition duration-200 group-hover:scale-105" />
+                        </button>
+                        <div className="flex items-center gap-1 px-2 py-1.5">
+                          <span className="min-w-0 flex-1 truncate text-[10px] text-neutral-400" title={image.fileName}>{image.fileName}</span>
+                          <a href={image.imageUrl} download={image.fileName} className="text-sm text-neutral-500 hover:text-white" aria-label={`Download ${image.fileName}`} title="Download image">⇩</a>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
             </div>
           )}
           {/* Profile / user management at bottom */}
@@ -766,7 +865,7 @@ export default function ChatWindow() {
                     <>
                       <button type="button" onClick={() => void copyText(message.content, index)} className="rounded px-1 text-xl leading-none text-neutral-300 hover:text-white" aria-label={copiedMessage === index ? "Copied" : "Copy message"} title={copiedMessage === index ? "Copied" : "Copy message"}>{copiedMessage === index ? "✓" : "⧉"}</button>
                       {message.imageUrl && (
-                        <a href={message.imageUrl} download="teller-generated-image.png" className="rounded px-1 text-xl leading-none text-neutral-300 hover:text-white" aria-label="Download image" title="Download image">⇩</a>
+                        <a href={message.imageUrl} download={message.imageFileName || "teller-generated-image.png"} className="rounded px-1 text-xl leading-none text-neutral-300 hover:text-white" aria-label="Download image" title="Download image">⇩</a>
                       )}
                     </>
                   ) : (
