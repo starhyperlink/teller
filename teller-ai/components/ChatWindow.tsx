@@ -34,6 +34,7 @@ declare global {
         signIn: () => Promise<unknown>;
       };
       fs?: {
+        mkdir: (path: string) => Promise<unknown>;
         write: (path: string, data: Blob) => Promise<unknown>;
         getReadURL: (path: string) => Promise<string>;
       };
@@ -116,7 +117,15 @@ async function storeImageInPuter(puter: NonNullable<Window["puter"]>, imageUrl: 
   if (!imageResponse.ok) throw new Error("Could not read the generated image for storage.");
   const imageBlob = await imageResponse.blob();
   const safeUserId = userId.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const path = `teller/${safeUserId}/images/${Date.now()}-${fileName}`;
+  const directory = `teller/${safeUserId}/images`;
+  for (const part of ["teller", `teller/${safeUserId}`, directory]) {
+    try {
+      await puter.fs.mkdir(part);
+    } catch (error) {
+      if (!String(error).toLowerCase().includes("exist")) throw error;
+    }
+  }
+  const path = `${directory}/${Date.now()}-${fileName}`;
   await puter.fs.write(path, imageBlob);
   return puter.fs.getReadURL(path);
 }
