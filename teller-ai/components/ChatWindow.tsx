@@ -6,8 +6,6 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 type Message = {
   role: "user" | "assistant";
   content: string;
-  imageUrl?: string;
-  imageFileName?: string;
   file?: {
     name: string;
     type: string;
@@ -26,108 +24,12 @@ type HistoryItem = {
 
 type Theme = "auto" | "dark" | "light";
 
-declare global {
-  interface Window {
-    puter?: {
-      auth?: {
-        isSignedIn: () => boolean;
-        signIn: () => Promise<unknown>;
-      };
-      fs?: {
-        mkdir: (path: string) => Promise<unknown>;
-        write: (path: string, data: Blob) => Promise<unknown>;
-        getReadURL: (path: string) => Promise<string>;
-      };
-      ai?: {
-        chat: (
-          prompt: string,
-          imageUrl?: string,
-          options?: { model?: string },
-        ) => Promise<unknown>;
-        txt2img: (
-          prompt: string,
-          options?: {
-            model?: string;
-            quality?: string;
-            ratio?: { w: number; h: number };
-            test_mode?: boolean;
-            input_image?: string;
-            input_image_mime_type?: string;
-          },
-        ) => Promise<unknown>;
-      };
-    };
-  }
-}
-
-function isImageAttachment(file: Message["file"]) {
-  if (!file) return false;
-  return file.type.startsWith("image/") || /\.(avif|gif|jpe?g|png|svg|webp)$/i.test(file.name);
-}
-
-const imagePromptPattern = /\b(generate|create|draw|make|render|design)\b.{0,40}\b(image|picture|illustration|artwork|photo|logo)\b|\b(image|picture|illustration|artwork|photo|logo)\b.{0,40}\b(generate|create|draw|make|render|design)\b/i;
-
-function waitForPuter(timeoutMs = 10000) {
-  if (window.puter?.ai?.txt2img) return Promise.resolve(window.puter);
-  return new Promise<NonNullable<Window["puter"]>>((resolve, reject) => {
-    const startedAt = Date.now();
-    const timer = window.setInterval(() => {
-      if (window.puter?.ai?.txt2img) {
-        window.clearInterval(timer);
-        resolve(window.puter);
-      } else if (Date.now() - startedAt >= timeoutMs) {
-        window.clearInterval(timer);
-        reject(new Error("Puter image generation is unavailable. Check your connection and try again."));
-      }
-    }, 100);
-  });
-}
-
 function getErrorMessage(error: unknown) {
   if (error instanceof Error) return error.message;
   if (typeof error === "object" && error !== null && "message" in error && typeof error.message === "string") {
     return error.message;
   }
   return "The request failed.";
-}
-
-function getPuterChatText(result: unknown) {
-  if (typeof result === "string") return result.trim();
-  if (typeof result !== "object" || result === null) return "";
-  if ("message" in result && typeof result.message === "object" && result.message !== null && "content" in result.message && typeof result.message.content === "string") {
-    return result.message.content.trim();
-  }
-  if ("content" in result && typeof result.content === "string") return result.content.trim();
-  return "";
-}
-
-function toImageFileName(value: string) {
-  const name = value
-    .replace(/^\s*(filename|file name)\s*:\s*/i, "")
-    .replace(/[^a-z0-9]+/gi, "-")
-    .replace(/^-+|-+$/g, "")
-    .toLowerCase()
-    .slice(0, 80);
-  return `${name || "teller-generated-image"}.png`;
-}
-
-async function storeImageInPuter(puter: NonNullable<Window["puter"]>, imageUrl: string, userId: string, fileName: string) {
-  if (!puter.fs) return imageUrl;
-  const imageResponse = await fetch(imageUrl);
-  if (!imageResponse.ok) throw new Error("Could not read the generated image for storage.");
-  const imageBlob = await imageResponse.blob();
-  const safeUserId = userId.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const directory = `teller/${safeUserId}/images`;
-  for (const part of ["teller", `teller/${safeUserId}`, directory]) {
-    try {
-      await puter.fs.mkdir(part);
-    } catch (error) {
-      if (!String(error).toLowerCase().includes("exist")) throw error;
-    }
-  }
-  const path = `${directory}/${Date.now()}-${fileName}`;
-  await puter.fs.write(path, imageBlob);
-  return puter.fs.getReadURL(path);
 }
 
 function renderInlineMarkdown(text: string): ReactNode[] {
@@ -201,23 +103,12 @@ export default function ChatWindow() {
   const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
   const [copiedMessage, setCopiedMessage] = useState<number | null>(null);
   const [isMounted, setIsMounted] = useState(false);
-  const puterLoginStartedRef = useRef(false);
   const { user, isAuthenticated, isLoading: isAuthLoading, loginWithRedirect, logout, getAccessTokenSilently } = useAuth0();
   const authReady = isMounted && !isAuthLoading;
   const hasSession = authReady && isAuthenticated;
   const [monthlyChatCount, setMonthlyChatCount] = useState(0);
   const [planName, setPlanName] = useState("Free");
   const [usageLimit, setUsageLimit] = useState(100);
-  const imageLibrary = histories.flatMap((history) => history.messages
-    .filter((message) => message.role === "assistant" && message.imageUrl)
-    .map((message, index) => ({
-      historyId: history.id,
-      title: history.title,
-      imageUrl: message.imageUrl as string,
-      fileName: message.imageFileName || "teller-generated-image.png",
-      key: `${history.id}-${message.imageUrl}-${index}`,
-    }))
-  );
   const accountProfile = {
     name: user?.name || "Teller User",
     email: user?.email || "user@example.com",
@@ -229,27 +120,7 @@ export default function ChatWindow() {
 
   useEffect(() => {
     setIsMounted(true);
-    const scriptId = "puter-js";
-    if (document.getElementById(scriptId)) return;
-    const script = document.createElement("script");
-    script.id = scriptId;
-    script.src = "https://js.puter.com/v2/";
-    script.async = true;
-    document.head.appendChild(script);
   }, []);
-
-  useEffect(() => {
-    if (isAuthLoading || !isAuthenticated || puterLoginStartedRef.current) return;
-    puterLoginStartedRef.current = true;
-    void waitForPuter()
-      .then((puter) => {
-        if (puter.auth && !puter.auth.isSignedIn()) {
-          return puter.auth.signIn();
-        }
-        return undefined;
-      })
-      .catch(() => undefined);
-  }, [isAuthLoading, isAuthenticated]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -490,12 +361,8 @@ export default function ChatWindow() {
   }
 
   async function sendMessage() {
-    const hasUploadedImage = isImageAttachment(pendingFile);
     if (!input.trim()) return;
     if (monthlyChatCount >= usageLimit) return;
-    const latestImageMessage = [...messages].reverse().find((message) => message.role === "assistant" && message.imageUrl);
-    const isImageEditRequest = Boolean(latestImageMessage?.imageUrl && /\b(edit|change|modify|update|adjust|improve|remove|add|make it|turn it|replace)\b/i.test(input));
-    const isImageGenerationRequest = hasUploadedImage || imagePromptPattern.test(input) || isImageEditRequest;
 
     const userMessage: Message = {
       role: "user",
@@ -510,72 +377,6 @@ export default function ChatWindow() {
     setLoading(true);
 
     try {
-      if (isImageGenerationRequest) {
-        const puter = await waitForPuter();
-        const ai = puter.ai;
-        if (!ai) throw new Error("Puter image generation is unavailable. Check your connection and try again.");
-        let statusMessages = updatedMessages;
-        if (puter.auth && !puter.auth.isSignedIn()) {
-          const signInStatus: Message = {
-            role: "assistant",
-            content: "Puter is not signed in. Logging you in to Puter before generating the image...",
-            file: null,
-          };
-          statusMessages = [...updatedMessages, signInStatus];
-          setMessages(statusMessages);
-          await puter.auth.signIn();
-        }
-        const inputImageMimeType = pendingFile?.type || pendingFile?.dataUrl.match(/^data:([^;,]+)/)?.[1] || "image/png";
-        const sourceImageUrl = hasUploadedImage ? pendingFile?.dataUrl : latestImageMessage?.imageUrl;
-        const result = await ai.txt2img(input.trim(), {
-          model: "gpt-image-1",
-          quality: "medium",
-          ratio: { w: 1024, h: 1024 },
-          ...(sourceImageUrl
-            ? {
-                input_image: sourceImageUrl,
-                input_image_mime_type: hasUploadedImage ? inputImageMimeType : "image/png",
-              }
-            : {}),
-        });
-        const imageUrl = result instanceof HTMLImageElement
-          ? result.src
-          : typeof result === "string"
-            ? result
-            : typeof result === "object" && result !== null && "src" in result && typeof result.src === "string"
-              ? result.src
-              : typeof result === "object" && result !== null && "url" in result && typeof result.url === "string"
-                ? result.url
-                : null;
-        if (!imageUrl) throw new Error("Puter returned an invalid image.");
-          let imageFileName = "teller-generated-image.png";
-          if (ai.chat) {
-            try {
-              const analysis = await ai.chat(
-                "Analyze this image and return only a short, descriptive filename for it, using lowercase words separated by hyphens and no extension.",
-                imageUrl,
-                { model: "gpt-5.6-luna" },
-              );
-              imageFileName = toImageFileName(getPuterChatText(analysis));
-            } catch {
-              // Image generation should still succeed if vision analysis is unavailable.
-            }
-          }
-          let storedImageUrl = imageUrl;
-          if (isAuthenticated && user?.sub) {
-            storedImageUrl = await storeImageInPuter(puter, imageUrl, user.sub, imageFileName);
-          }
-        const assistantMessage: Message = {
-          role: "assistant",
-            content: `Here is the updated image. Filename: ${imageFileName}`,
-            imageUrl: storedImageUrl,
-            imageFileName,
-        };
-        setMessages([...updatedMessages, assistantMessage]);
-        playReplySound();
-        return;
-      }
-
       const token = isAuthenticated ? await getAccessTokenSilently() : null;
       const response = await fetch("/api/chat", {
         method: "POST",
@@ -589,7 +390,6 @@ export default function ChatWindow() {
               return {
                 role: msg.role,
                 content: `${msg.content || ""}\n[Attachment: ${msg.file.name} (${msg.file.type}; ${msg.file.size} bytes)]`,
-                ...(typeof msg.imageUrl === "string" ? { imageUrl: msg.imageUrl } : {}),
               };
             }
             return { role: msg.role, content: msg.content };
@@ -673,9 +473,7 @@ export default function ChatWindow() {
         setMessages([...updatedMessages, { role: "assistant", content: "Sorry, something went wrong.", file: null }]);
       }
     } catch (err) {
-      const errorMessage = isImageGenerationRequest
-        ? `Image generation failed: ${getErrorMessage(err)}`
-        : "Network error. Please try again.";
+      const errorMessage = getErrorMessage(err) || "Network error. Please try again.";
       setMessages([...updatedMessages, { role: "assistant", content: errorMessage, file: null }]);
     } finally {
       setLoading(false);
@@ -745,30 +543,6 @@ export default function ChatWindow() {
                 </div>
               </section>
 
-              <section aria-labelledby="image-library-heading">
-                <div className="mb-2 flex items-center justify-between px-1">
-                  <h2 id="image-library-heading" className="text-xs font-semibold uppercase tracking-wider text-neutral-500">Image library</h2>
-                  <span className="text-xs text-neutral-600">{imageLibrary.length}</span>
-                </div>
-                {imageLibrary.length === 0 ? (
-                  <p className="px-1 text-xs text-neutral-500">Generated images will appear here.</p>
-                ) : (
-                  <div className="grid grid-cols-2 gap-2">
-                    {imageLibrary.map((image) => (
-                      <div key={image.key} className="group overflow-hidden rounded-lg border border-neutral-800 bg-neutral-950">
-                        <button type="button" onClick={() => loadHistory(image.historyId)} className="block w-full text-left" title={`Open ${image.title}`}>
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={image.imageUrl} alt={image.fileName} className="aspect-square w-full object-cover transition duration-200 group-hover:scale-105" />
-                        </button>
-                        <div className="flex items-center gap-1 px-2 py-1.5">
-                          <span className="min-w-0 flex-1 truncate text-[10px] text-neutral-400" title={image.fileName}>{image.fileName}</span>
-                          <a href={image.imageUrl} download={image.fileName} className="text-sm text-neutral-500 hover:text-white" aria-label={`Download ${image.fileName}`} title="Download image">⇩</a>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </section>
             </div>
           )}
           {/* Profile / user management at bottom */}
@@ -862,12 +636,6 @@ export default function ChatWindow() {
             {messages.map((message, index) => (
               message.role === "user" && message.file ? null :
               <div key={index} className={`min-w-0 max-w-[85%] overflow-hidden rounded-xl p-4 [overflow-wrap:anywhere] ${message.role === "user" ? "ml-auto bg-blue-600" : "mr-auto bg-neutral-800"}`}>
-                {message.imageUrl && (
-                  <div className="mb-3 overflow-hidden rounded-2xl border border-white/25 bg-white/10 p-2 shadow-[0_8px_32px_rgba(0,0,0,0.2)] backdrop-blur-xl">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={message.imageUrl} alt="Generated by Teller AI" className="max-h-[32rem] max-w-full rounded-xl object-contain" />
-                  </div>
-                )}
                 <div className="min-w-0 max-w-full text-sm leading-7 [overflow-wrap:anywhere]">
                   <FormattedMessage content={message.content} showCodeCopy={message.role === "assistant"} onCopyCode={(code) => void copyText(code, index)} />
                 </div>
@@ -875,9 +643,6 @@ export default function ChatWindow() {
                   {message.role === "assistant" ? (
                     <>
                       <button type="button" onClick={() => void copyText(message.content, index)} className="rounded px-1 text-xl leading-none text-neutral-300 hover:text-white" aria-label={copiedMessage === index ? "Copied" : "Copy message"} title={copiedMessage === index ? "Copied" : "Copy message"}>{copiedMessage === index ? "✓" : "⧉"}</button>
-                      {message.imageUrl && (
-                        <a href={message.imageUrl} download={message.imageFileName || "teller-generated-image.png"} className="rounded px-1 text-xl leading-none text-neutral-300 hover:text-white" aria-label="Download image" title="Download image">⇩</a>
-                      )}
                     </>
                   ) : (
                     <button type="button" onClick={() => editMessage(message, index)} className="rounded px-1 text-xl leading-none text-neutral-300 hover:text-white" aria-label="Edit message" title="Edit message">✎</button>
