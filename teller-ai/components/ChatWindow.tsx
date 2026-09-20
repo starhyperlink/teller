@@ -78,6 +78,15 @@ function renderInlineMarkdown(text: string): ReactNode[] {
   });
 }
 
+function renderMathBlock(block: string, key: string): ReactNode {
+  const stripped = block.replace(/^\s*\$\$\s*|\s*\$\$\s*$/g, "").replace(/^\s*\\\[\s*|\s*\\\]\s*$/g, "");
+  return (
+    <div key={key} className="my-3 overflow-x-auto rounded-lg border border-sky-500/20 bg-sky-500/5 px-3 py-2 text-center text-sky-100">
+      {renderMathExpression(stripped, true)}
+    </div>
+  );
+}
+
 function FormattedMessage({ content, onCopyCode, showCodeCopy = true }: { content: string; onCopyCode: (code: string) => void; showCodeCopy?: boolean }) {
   const blocks = content.split(/```([\w+-]*)\n?([\s\S]*?)```/g);
   const output: ReactNode[] = [];
@@ -85,14 +94,24 @@ function FormattedMessage({ content, onCopyCode, showCodeCopy = true }: { conten
   for (let index = 0; index < blocks.length; index += 3) {
     const text = blocks[index];
     if (text) {
-      text.split("\n").forEach((line, lineIndex) => {
-        const heading = line.match(/^(#{1,3})\s+(.+)$/);
-        const bullet = line.match(/^\s*[-*]\s+(.+)$/);
-        const numbered = line.match(/^\s*\d+\.\s+(.+)$/);
-        if (heading) output.push(<h3 key={`${index}-${lineIndex}`} className="mt-3 text-base font-semibold text-white">{renderInlineMarkdown(heading[2])}</h3>);
-        else if (bullet) output.push(<div key={`${index}-${lineIndex}`} className="pl-4 before:mr-2 before:content-['•']">{renderInlineMarkdown(bullet[1])}</div>);
-        else if (numbered) output.push(<div key={`${index}-${lineIndex}`} className="pl-4">{renderInlineMarkdown(line.trim())}</div>);
-        else output.push(<span key={`${index}-${lineIndex}`}>{renderInlineMarkdown(line)}{lineIndex < text.split("\n").length - 1 && <br />}</span>);
+      const mathSegments = text.split(/(\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\])/g);
+      mathSegments.forEach((segment, segmentIndex) => {
+        if (!segment) return;
+
+        if (segment.match(/^\$\$[\s\S]+?\$\$$/) || segment.match(/^\\\[[\s\S]+?\\\]$/)) {
+          output.push(renderMathBlock(segment, `${index}-${segmentIndex}`));
+          return;
+        }
+
+        segment.split("\n").forEach((line, lineIndex) => {
+          const heading = line.match(/^(#{1,3})\s+(.+)$/);
+          const bullet = line.match(/^\s*[-*]\s+(.+)$/);
+          const numbered = line.match(/^\s*\d+\.\s+(.+)$/);
+          if (heading) output.push(<h3 key={`${index}-${segmentIndex}-${lineIndex}`} className="mt-3 text-base font-semibold text-white">{renderInlineMarkdown(heading[2])}</h3>);
+          else if (bullet) output.push(<div key={`${index}-${segmentIndex}-${lineIndex}`} className="pl-4 before:mr-2 before:content-['•']">{renderInlineMarkdown(bullet[1])}</div>);
+          else if (numbered) output.push(<div key={`${index}-${segmentIndex}-${lineIndex}`} className="pl-4">{renderInlineMarkdown(line.trim())}</div>);
+          else output.push(<span key={`${index}-${segmentIndex}-${lineIndex}`}>{renderInlineMarkdown(line)}{lineIndex < segment.split("\n").length - 1 && <br />}</span>);
+        });
       });
     }
     if (index + 1 < blocks.length) {
