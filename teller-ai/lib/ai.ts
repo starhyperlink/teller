@@ -22,6 +22,8 @@ Format replies for readability:
 - Use numbered lists for steps, procedures, or rankings
 - Use **bold** for important terms and *italics* sparingly for emphasis
 - Use inline code for commands, filenames, variables, and short technical values
+- Use LaTeX math formatting for equations, formulas, and scientific notation when relevant, such as $E = mc^2$, $\alpha = \frac{\Delta v}{\Delta t}$, or $1.5 \times 10^6$
+- Put display math in $$...$$ or \[ ... \] blocks for multi-line equations when a full equation is important
 - Put code in fenced Markdown blocks with a language name when applicable
 - Do not use Markdown tables, HTML, or decorative symbols unless the user asks
 - Match the amount of structure to the question; keep simple answers concise

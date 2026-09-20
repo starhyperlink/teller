@@ -1,6 +1,8 @@
 "use client";
 
 import { useAuth0 } from "@auth0/auth0-react";
+import katex from "katex";
+import "katex/dist/katex.min.css";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 type Message = {
@@ -32,8 +34,39 @@ function getErrorMessage(error: unknown) {
   return "The request failed.";
 }
 
+function renderMathExpression(expression: string, displayMode: boolean) {
+  return (
+    <span
+      dangerouslySetInnerHTML={{
+        __html: katex.renderToString(expression, {
+          displayMode,
+          throwOnError: false,
+          output: "htmlAndMathml",
+          strict: "ignore",
+        }),
+      }}
+    />
+  );
+}
+
 function renderInlineMarkdown(text: string): ReactNode[] {
-  return text.split(/(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*|\[[^\]]+\]\([^\s)]+\))/g).map((part, index) => {
+  const tokens = text.split(/(\$\$[\s\S]+?\$\$|\$[^$\n]+?\$|\\\([\s\S]+?\\\)|\\\[[\s\S]+?\\\]|`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*|\[[^\]]+\]\([^\s)]+\))/g);
+
+  return tokens.map((part, index) => {
+    if (!part) return null;
+
+    if (part.match(/^\$\$[\s\S]+?\$\$$/)) {
+      return <span key={index} className="my-2 block text-center">{renderMathExpression(part.slice(2, -2), true)}</span>;
+    }
+    if (part.match(/^\$[^$\n]+?\$$/)) {
+      return <span key={index} className="inline-block align-middle text-sky-200">{renderMathExpression(part.slice(1, -1), false)}</span>;
+    }
+    if (part.match(/^\\\([\s\S]+?\\\)$/)) {
+      return <span key={index} className="inline-block align-middle text-sky-200">{renderMathExpression(part.slice(2, -2), false)}</span>;
+    }
+    if (part.match(/^\\\[[\s\S]+?\\\]$/)) {
+      return <span key={index} className="my-2 block text-center">{renderMathExpression(part.slice(2, -2), true)}</span>;
+    }
     if (part.startsWith("`") && part.endsWith("`")) {
       return <code key={index} className="rounded bg-black/25 px-1.5 py-0.5 font-mono text-[0.9em] text-emerald-200">{part.slice(1, -1)}</code>;
     }
