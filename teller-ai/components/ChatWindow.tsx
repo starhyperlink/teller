@@ -34,11 +34,61 @@ function getErrorMessage(error: unknown) {
   return "The request failed.";
 }
 
+function normalizeMathExpression(expression: string) {
+  let normalized = expression.trim();
+
+  const greekMap: Record<string, string> = {
+    α: "\\alpha",
+    β: "\\beta",
+    γ: "\\gamma",
+    δ: "\\delta",
+    ε: "\\epsilon",
+    θ: "\\theta",
+    λ: "\\lambda",
+    μ: "\\mu",
+    π: "\\pi",
+    ρ: "\\rho",
+    σ: "\\sigma",
+    τ: "\\tau",
+    φ: "\\phi",
+    χ: "\\chi",
+    ψ: "\\psi",
+    ω: "\\omega",
+    Δ: "\\Delta",
+    Θ: "\\Theta",
+    Λ: "\\Lambda",
+    Π: "\\Pi",
+    Σ: "\\Sigma",
+    Φ: "\\Phi",
+    Ω: "\\Omega",
+  };
+  Object.entries(greekMap).forEach(([symbol, latex]) => {
+    normalized = normalized.replaceAll(symbol, latex);
+  });
+
+  normalized = normalized
+    .replace(/×/g, " \\times ")
+    .replace(/÷/g, " \\div ")
+    .replace(/±/g, " \\pm ")
+    .replace(/∞/g, "\\infty")
+    .replace(/°/g, "^\\circ")
+    .replace(/∂/g, "\\partial")
+    .replace(/∫/g, "\\int")
+    .replace(/√/g, "\\sqrt")
+    .replace(/\s*\^\s*\{/g, "^\{")
+    .replace(/([0-9]+(?:\.[0-9]+)?)\s*e\s*([-+]?\d+)/gi, (_, coefficient: string, exponent: string) => `${coefficient} \\times 10^{${exponent}}`)
+    .replace(/([0-9]+(?:\.[0-9]+)?)\s*×\s*10\^\{?([-+]?\d+)\}?/gi, (_, coefficient: string, exponent: string) => `${coefficient} \\times 10^{${exponent}}`);
+
+  return normalized;
+}
+
 function renderMathExpression(expression: string, displayMode: boolean) {
+  const normalizedExpression = normalizeMathExpression(expression);
+
   return (
     <span
       dangerouslySetInnerHTML={{
-        __html: katex.renderToString(expression, {
+        __html: katex.renderToString(normalizedExpression, {
           displayMode,
           throwOnError: false,
           output: "htmlAndMathml",
