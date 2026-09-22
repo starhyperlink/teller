@@ -8,10 +8,10 @@ const paypalBaseUrl =
     : "https://api-m.sandbox.paypal.com";
 
 const planAmounts: Record<string, string> = {
-  "pro-monthly": "180.00",
-  "business-monthly": "520.00",
-  "pro-yearly": "1200.00",
-  "business-yearly": "5800.00",
+  "pro-monthly": "90.00",
+  "business-monthly": "260.00",
+  "pro-yearly": "600.00",
+  "business-yearly": "2900.00",
 };
 
 const zarToUsdRate = Number(process.env.PAYPAL_ZAR_TO_USD_RATE || "0.0549");

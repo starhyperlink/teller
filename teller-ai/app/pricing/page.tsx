@@ -39,7 +39,7 @@ export default function PricingPage() {
 
           <PricingCard
             name="Pro"
-            price="R180/mo"
+            price="R90/mo"
             paypalPlan="pro-monthly"
             features={[
               "1,000 messages per month",
@@ -54,7 +54,7 @@ export default function PricingPage() {
 
           <PricingCard
             name="Business"
-            price="R520/mo"
+            price="R260/mo"
             paypalPlan="business-monthly"
             features={[
               "5,000 messages per month",
@@ -68,7 +68,7 @@ export default function PricingPage() {
 
           <PricingCard
             name="Pro (Yearly)"
-            price="R1200/yr"
+            price="R600/yr"
             paypalPlan="pro-yearly"
             features={[
               "1,000 messages per month",
@@ -82,7 +82,7 @@ export default function PricingPage() {
 
           <PricingCard
             name="Business (Yearly)"
-            price="R5800/yr"
+            price="R2900/yr"
             paypalPlan="business-yearly"
             features={[
               "5,000 messages per month",

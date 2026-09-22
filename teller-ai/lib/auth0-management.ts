@@ -46,7 +46,7 @@ export async function getAuth0User(userId: string) {
 
 export async function updateAuth0Profile(
   userId: string,
-  profile: { name: string; phone_number: string }
+  profile: { name: string; phone_number?: string }
 ) {
   const token = await getManagementToken();
   const response = await fetch(getManagementApiUrl(`/users/${encodeURIComponent(userId)}`), {
@@ -58,7 +58,10 @@ export async function updateAuth0Profile(
     body: JSON.stringify(profile),
   });
 
-  if (!response.ok) throw new Error("Could not update the Auth0 profile.");
+  if (!response.ok) {
+    const details = await response.text();
+    throw new Error(`Auth0 profile update failed (${response.status}): ${details}`);
+  }
 }
 
 export async function updateAuth0Plan(

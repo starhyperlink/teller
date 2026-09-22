@@ -46,8 +46,9 @@ export default function SettingsPage() {
     const loadAccount = async () => {
       try {
         const token = await getAccessTokenSilently();
-        const response = await fetch("/api/account", {
+        const response = await fetch(`/api/account?t=${Date.now()}`, {
           headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
         });
         if (!response.ok) return;
         const account = await response.json();
@@ -62,7 +63,11 @@ export default function SettingsPage() {
 
     void loadAccount();
     window.addEventListener("focus", loadAccount);
-    return () => window.removeEventListener("focus", loadAccount);
+    window.addEventListener("pageshow", loadAccount);
+    return () => {
+      window.removeEventListener("focus", loadAccount);
+      window.removeEventListener("pageshow", loadAccount);
+    };
   }, [getAccessTokenSilently, isAuthenticated, isLoading, user]);
 
   async function saveProfile() {
@@ -81,7 +86,7 @@ export default function SettingsPage() {
         body: JSON.stringify({ name, phone }),
       });
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "Could not update profile.");
+      if (!response.ok) throw new Error(result.detail || result.error || "Could not update profile.");
       setName(result.name);
       setPhone(result.phone);
       setProfileMessage("Profile saved");

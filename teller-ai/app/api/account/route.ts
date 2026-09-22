@@ -53,10 +53,19 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: "Enter a valid phone number." }, { status: 400 });
     }
 
-    await updateAuth0Profile(userId, { name, phone_number: phone });
+    await updateAuth0Profile(
+      userId,
+      phone ? { name, phone_number: phone } : { name },
+    );
     return NextResponse.json({ name, phone });
   } catch (error) {
     console.error("Account profile update error:", error);
-    return NextResponse.json({ error: "Could not update profile." }, { status: 500 });
+    return NextResponse.json(
+      {
+        error: "Could not update profile.",
+        detail: error instanceof Error ? error.message : "Unknown profile update error.",
+      },
+      { status: 500 },
+    );
   }
 }
