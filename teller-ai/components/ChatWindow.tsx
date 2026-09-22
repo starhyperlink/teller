@@ -1,6 +1,7 @@
 "use client";
 
 import { useAuth0 } from "@auth0/auth0-react";
+import PayPalUpgradeButton from "@/components/PayPalUpgradeButton";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -713,7 +714,16 @@ export default function ChatWindow() {
               </button>
               <img src="/jupiter-black.svg" alt="Teller AI" className="h-8 w-8 object-contain" />
             </div>
-            <div className="relative">
+            <div className="flex items-center gap-2">
+              {hasSession && planName === "Free" && (
+                <PayPalUpgradeButton
+                  plan="pro-monthly"
+                  className="rounded-md bg-orange-500 px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-orange-400"
+                >
+                  Upgrade
+                </PayPalUpgradeButton>
+              )}
+              <div className="relative">
               <button
                 type="button"
                 onClick={() => setIsThemeMenuOpen((open) => !open)}
@@ -740,6 +750,7 @@ export default function ChatWindow() {
                   ))}
                 </div>
               )}
+              </div>
             </div>
           </div>
         </header>

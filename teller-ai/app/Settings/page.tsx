@@ -51,7 +51,7 @@ export default function SettingsPage() {
         });
         if (!response.ok) return;
         const account = await response.json();
-        setName(account.name || user.name || "");
+        setName(account.name || user?.name || "");
         setPhone(account.phone || "");
         setPlanName(account.plan);
         setUsageLimit(account.usageLimit);
