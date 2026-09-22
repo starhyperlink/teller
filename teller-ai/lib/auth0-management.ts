@@ -36,8 +36,29 @@ export async function getAuth0User(userId: string) {
   if (!response.ok) throw new Error("Could not load the Auth0 account.");
   return response.json() as Promise<{
     user_id: string;
+    name?: string;
+    email?: string;
+    phone_number?: string;
+    picture?: string;
     app_metadata?: Record<string, unknown>;
   }>;
+}
+
+export async function updateAuth0Profile(
+  userId: string,
+  profile: { name: string; phone_number: string }
+) {
+  const token = await getManagementToken();
+  const response = await fetch(getManagementApiUrl(`/users/${encodeURIComponent(userId)}`), {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(profile),
+  });
+
+  if (!response.ok) throw new Error("Could not update the Auth0 profile.");
 }
 
 export async function updateAuth0Plan(

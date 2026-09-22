@@ -2,6 +2,7 @@
 
 import { useAuth0 } from "@auth0/auth0-react";
 import { useEffect, useState } from "react";
+import PayPalUpgradeButton from "@/components/PayPalUpgradeButton";
 
 export default function SettingsPage() {
   const { user, isAuthenticated, isLoading, loginWithRedirect, logout, getAccessTokenSilently } = useAuth0();
@@ -13,9 +14,14 @@ export default function SettingsPage() {
   const [aiResponsesEnabled, setAiResponsesEnabled] = useState(true);
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
   const [saveMessage, setSaveMessage] = useState("");
+  const [name, setName] = useState(user?.name || "");
+  const [phone, setPhone] = useState("");
+  const [profileMessage, setProfileMessage] = useState("");
+  const [profileError, setProfileError] = useState("");
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
 
   const accountProfile = {
-    name: user?.name || "Teller User",
+    name: name || user?.name || "Teller User",
     email: user?.email || "user@example.com",
     picture:
       user?.picture ||
@@ -45,6 +51,8 @@ export default function SettingsPage() {
         });
         if (!response.ok) return;
         const account = await response.json();
+        setName(account.name || user.name || "");
+        setPhone(account.phone || "");
         setPlanName(account.plan);
         setUsageLimit(account.usageLimit);
         if (Number.isInteger(account.usageCount)) setMonthlyChatCount(account.usageCount);
@@ -55,7 +63,34 @@ export default function SettingsPage() {
     void loadAccount();
     window.addEventListener("focus", loadAccount);
     return () => window.removeEventListener("focus", loadAccount);
-  }, [getAccessTokenSilently, isAuthenticated, isLoading]);
+  }, [getAccessTokenSilently, isAuthenticated, isLoading, user]);
+
+  async function saveProfile() {
+    setIsSavingProfile(true);
+    setProfileMessage("");
+    setProfileError("");
+
+    try {
+      const token = await getAccessTokenSilently();
+      const response = await fetch("/api/account", {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ name, phone }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Could not update profile.");
+      setName(result.name);
+      setPhone(result.phone);
+      setProfileMessage("Profile saved");
+    } catch (error) {
+      setProfileError(error instanceof Error ? error.message : "Could not update profile.");
+    } finally {
+      setIsSavingProfile(false);
+    }
+  }
 
   function saveSettings() {
     localStorage.setItem(
@@ -90,27 +125,76 @@ export default function SettingsPage() {
         <div className="mt-8 space-y-6">
           <section className="rounded-xl border border-neutral-800 bg-neutral-950 p-5">
             <h2 className="text-lg font-semibold">Personal details</h2>
-            <div className="mt-4 space-y-3 text-sm text-neutral-300">
-              <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
-                <span>Name</span>
-                <span className="text-neutral-100">{accountProfile.name}</span>
-              </div>
-              <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
+            <div className="mt-4 space-y-4 text-sm text-neutral-300">
+              <label className="block">
+                <span className="mb-2 block">Name</span>
+                <input
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  disabled={!isAuthenticated || isSavingProfile}
+                  className="w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-white outline-none focus:border-white disabled:opacity-60"
+                />
+              </label>
+              <div className="border-b border-neutral-800 pb-3">
                 <span>Email</span>
-                <span className="text-neutral-100">{accountProfile.email}</span>
+                <span className="float-right text-neutral-100">{accountProfile.email}</span>
               </div>
+              <label className="block">
+                <span className="mb-2 block">Phone</span>
+                <input
+                  type="tel"
+                  value={phone}
+                  onChange={(event) => setPhone(event.target.value)}
+                  disabled={!isAuthenticated || isSavingProfile}
+                  placeholder="Add a phone number"
+                  className="w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-white outline-none focus:border-white disabled:opacity-60"
+                />
+              </label>
               <div className="flex items-center justify-between">
                 <span>Plan</span>
-                <span className="text-neutral-100">
-                  {planName}
-                </span>
+                <span className="text-neutral-100">{planName}</span>
               </div>
               <div className="flex items-center justify-between">
                 <span>Chats this month</span>
                 <span className="text-neutral-100">{monthlyChatCount}/{usageLimit}</span>
               </div>
             </div>
+            {isAuthenticated && (
+              <div className="mt-4 flex items-center justify-end gap-3">
+                {profileMessage && <span className="text-sm text-emerald-400">{profileMessage}</span>}
+                {profileError && <span className="text-sm text-red-400">{profileError}</span>}
+                <button
+                  type="button"
+                  onClick={saveProfile}
+                  disabled={isSavingProfile}
+                  className="rounded-lg bg-white px-4 py-2 text-sm font-medium text-black disabled:opacity-60"
+                >
+                  {isSavingProfile ? "Saving..." : "Save profile"}
+                </button>
+              </div>
+            )}
           </section>
+
+          {isAuthenticated && planName === "Free" && (
+            <section className="rounded-xl border border-neutral-800 bg-neutral-950 p-5">
+              <h2 className="text-lg font-semibold">Upgrade your plan</h2>
+              <p className="mt-2 text-sm text-neutral-400">Unlock more messages and faster responses.</p>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <PayPalUpgradeButton
+                  plan="pro-monthly"
+                  className="rounded-lg bg-white px-4 py-3 text-sm font-semibold text-black"
+                >
+                  Upgrade to Pro
+                </PayPalUpgradeButton>
+                <PayPalUpgradeButton
+                  plan="business-monthly"
+                  className="rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-3 text-sm font-semibold text-white"
+                >
+                  Upgrade to Business
+                </PayPalUpgradeButton>
+              </div>
+            </section>
+          )}
 
           <section className="rounded-xl border border-neutral-800 bg-neutral-950 p-5">
             <h2 className="text-lg font-semibold">Preferences</h2>
