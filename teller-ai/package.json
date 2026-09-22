@@ -6,10 +6,17 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "cap:add:android": "cap add android",
+    "cap:sync": "CAP_SERVER_URL=\"${CAP_SERVER_URL:?Set CAP_SERVER_URL to the deployed app URL}\" cap sync android",
+    "cap:open:android": "cap open android",
+    "android:build": "CAP_SERVER_URL=\"${CAP_SERVER_URL:?Set CAP_SERVER_URL to the deployed app URL}\" cap sync android && cd android && ./gradlew bundleRelease"
   },
   "dependencies": {
     "@auth0/auth0-react": "^2.24.1",
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/cli": "^8.5.2",
+    "@capacitor/core": "^8.5.2",
     "@paypal/paypal-server-sdk": "^1.0.0",
     "@supabase/supabase-js": "^2.112.4",
     "body-parser": "^2.3.0",
