@@ -8,9 +8,9 @@
     "start": "next start",
     "lint": "eslint",
     "cap:add:android": "cap add android",
-    "cap:sync": "CAP_SERVER_URL=\"${CAP_SERVER_URL:?Set CAP_SERVER_URL to the deployed app URL}\" cap sync android",
+    "cap:sync": "cap sync android",
     "cap:open:android": "cap open android",
-    "android:build": "CAP_SERVER_URL=\"${CAP_SERVER_URL:?Set CAP_SERVER_URL to the deployed app URL}\" cap sync android && cd android && ./gradlew bundleRelease"
+    "android:build": "cap sync android && cd android && ./gradlew bundleRelease"
   },
   "dependencies": {
     "@auth0/auth0-react": "^2.24.1",
