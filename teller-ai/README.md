@@ -24,9 +24,21 @@ This project uses [`next/font`](https://nextjs.org/docs/app/building-your-applic
 
 To learn more about Next.js, take a look at the following resources:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
 
+## Hugging Face image generation
+
+The `/image-generator` page calls the Hugging Face MCP server from the server-side
+`/api/images` route. Configure these variables in `.env.local` or your deployment
+environment:
+
+```bash
+HF_TOKEN=hf_your_token_with_inference_permissions
+HF_MCP_URL=https://huggingface.co/mcp
+```
+
+The route discovers an image-generation tool from `tools/list`. Set
+`HF_MCP_IMAGE_TOOL` when your Hugging Face MCP account exposes more than one
+image-capable tool and you want to select one explicitly.
 You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
 
 ## Deploy on Vercel
