@@ -24,11 +24,10 @@ const MCP_URL = process.env.HF_MCP_URL || "https://huggingface.co/mcp";
 
 function authHeaders() {
   const token = process.env.HF_TOKEN;
-  if (!token) throw new Error("HF_TOKEN is not configured.");
   return {
     "Content-Type": "application/json",
     Accept: "application/json, text/event-stream",
-    Authorization: `Bearer ${token}`,
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };
 }
 
@@ -94,7 +93,14 @@ export async function generateImageWithHuggingFaceMcp(prompt: string) {
 
   const result = await mcpRequest("tools/call", {
     name: tool.name,
-    arguments: { [promptField]: prompt },
+    arguments: {
+      [promptField]: prompt,
+      resolution: "1024x1024 ( 1:1 )",
+      seed: 42,
+      steps: 8,
+      shift: 3,
+      random_seed: true,
+    },
   }, 3);
   return extractImage(result.result?.content, result.result?.structuredContent);
 }
