@@ -9,6 +9,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 type Message = {
   role: "user" | "assistant";
   content: string;
+  imageUrl?: string;
   file?: {
     name: string;
     type: string;
@@ -522,7 +523,7 @@ export default function ChatWindow() {
         if (isAuthenticated && !hasServerUsageCount) {
           setMonthlyChatCount((count) => count + 1);
         }
-        const assistantMessage: Message = { role: "assistant", content: data.reply, file: null };
+        const assistantMessage: Message = { role: "assistant", content: data.reply, imageUrl: data.imageUrl || undefined, file: null };
         setMessages([...updatedMessages, assistantMessage]);
         playReplySound();
 
@@ -762,6 +763,7 @@ export default function ChatWindow() {
               <div key={index} className={`min-w-0 max-w-[85%] overflow-hidden rounded-xl p-4 [overflow-wrap:anywhere] ${message.role === "user" ? "ml-auto bg-blue-600" : "mr-auto bg-neutral-800"}`}>
                 <div className="min-w-0 max-w-full text-sm leading-7 [overflow-wrap:anywhere]">
                   <FormattedMessage content={message.content} showCodeCopy={message.role === "assistant"} onCopyCode={(code) => void copyText(code, index)} />
+                  {message.imageUrl && <img src={message.imageUrl} alt="Generated from your prompt" className="mt-4 max-h-[32rem] w-full rounded-lg object-contain" />}
                 </div>
                 <div className="mt-3 flex gap-2 border-t border-white/10 pt-2 opacity-70">
                   {message.role === "assistant" ? (
