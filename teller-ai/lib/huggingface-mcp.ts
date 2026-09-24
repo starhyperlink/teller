@@ -73,7 +73,11 @@ function extractImage(content: McpContent[] | undefined, structuredContent?: Rec
     structuredContent?.imageUrl,
     structuredContent?.url,
   ];
-  const result = candidates.find((value): value is string => typeof value === "string" && (value.startsWith("http") || value.startsWith("data:image/")));
+  const result = candidates.reduce<string | undefined>((found, value) => {
+    if (found || typeof value !== "string") return found;
+    if (value.startsWith("http") || value.startsWith("data:image/")) return value;
+    return value.match(/https?:\/\/[^\s'"\]}]+/)?.[0];
+  }, undefined);
   if (!result) throw new Error("The Hugging Face image tool did not return an image.");
   return result;
 }
