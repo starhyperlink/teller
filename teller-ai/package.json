@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@auth0/auth0-react": "^2.24.1",
+    "@gradio/client": "^2.7.0",
     "@paypal/paypal-server-sdk": "^1.0.0",
     "@supabase/supabase-js": "^2.112.4",
     "body-parser": "^2.3.0",

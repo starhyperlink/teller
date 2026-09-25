@@ -30,16 +30,6 @@ export default function ImageGeneratorPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const scriptId = "puter-js";
-    if (document.getElementById(scriptId)) return;
-    const script = document.createElement("script");
-    script.id = scriptId;
-    script.src = "https://js.puter.com/v2/";
-    script.async = true;
-    document.head.appendChild(script);
-  }, []);
-
   async function generateImage() {
     const trimmedPrompt = prompt.trim();
     if (!trimmedPrompt || loading) return;
@@ -47,21 +37,24 @@ export default function ImageGeneratorPage() {
     setLoading(true);
     setError(null);
     try {
-      const txt2img = window.puter?.ai?.txt2img;
-      if (!txt2img) {
-        throw new Error("Puter is still loading. Wait a moment and try again.");
+      const response = await fetch("/api/images/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: trimmedPrompt,
+          model,
+          quality,
+          ratio: ratios[ratio].value,
+          testMode,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Image generation failed.");
       }
 
-      const result = await txt2img(trimmedPrompt, {
-        model,
-        quality,
-        ratio: ratios[ratio].value,
-        test_mode: testMode,
-      });
-      if (!(result instanceof HTMLImageElement) || !result.src) {
-        throw new Error("Puter returned an invalid image result.");
-      }
-      setImage(result.src);
+      setImage(data.url);
     } catch (generationError) {
       const message = generationError instanceof Error ? generationError.message : "Image generation failed.";
       setError(message);

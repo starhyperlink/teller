@@ -16,6 +16,16 @@ You should:
 - Do not provide unsafe, illegal, or harmful instructions
 `;
 
+function getMaxTokens() {
+  const configured = Number(process.env.AI_MAX_TOKENS ?? 1500);
+
+  if (!Number.isFinite(configured) || configured <= 0) {
+    return 1500;
+  }
+
+  return Math.min(Math.max(Math.round(configured), 256), 4096);
+}
+
 export async function callTellerAI(
   messages: { role: string; content: string }[]
 ) {
@@ -26,7 +36,7 @@ export async function callTellerAI(
       Authorization: `Bearer ${process.env.AI_API_KEY}`,
     },
     body: JSON.stringify({
-      model: process.env.AI_MODEL,
+      model: process.env.AI_MODEL || "openai/gpt-4o-mini",
       messages: [
         {
           role: "system",
@@ -35,12 +45,24 @@ export async function callTellerAI(
         ...messages,
       ],
       temperature: 0.7,
+      max_tokens: getMaxTokens(),
     }),
   });
 
   if (!response.ok) {
-    const error = await response.text();
-    throw new Error(error);
+    const rawError = await response.text();
+    let message = rawError;
+
+    try {
+      const parsed = JSON.parse(rawError);
+      if (parsed?.error?.message) {
+        message = parsed.error.message;
+      }
+    } catch {
+      // Ignore invalid JSON; keep the raw text.
+    }
+
+    throw new Error(`AI request failed (${response.status}): ${message}`);
   }
 
   const data = await response.json();

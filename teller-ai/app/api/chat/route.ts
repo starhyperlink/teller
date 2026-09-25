@@ -44,8 +44,20 @@ export async function POST(req: Request) {
   } catch (error) {
     console.error("Chat API error:", error);
 
+    const message = error instanceof Error ? error.message : "Something went wrong.";
+
+    if (/credit|max_tokens|402/i.test(message)) {
+      return NextResponse.json(
+        {
+          error:
+            "The AI provider has exhausted its credits for this request. Please add credits or lower the request size.",
+        },
+        { status: 402 }
+      );
+    }
+
     return NextResponse.json(
-      { error: "Something went wrong." },
+      { error: message },
       { status: 500 }
     );
   }
