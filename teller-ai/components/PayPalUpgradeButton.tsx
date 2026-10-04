@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useAuth0 } from "@auth0/auth0-react";
+import { useAppAuth } from "@/components/Auth0Provider";
 
 export default function PayPalUpgradeButton({
   plan,
@@ -14,7 +14,7 @@ export default function PayPalUpgradeButton({
 }) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { user, isAuthenticated, loginWithRedirect, getAccessTokenSilently } = useAuth0();
+  const { user, isAuthenticated, loginWithRedirect, getAccessTokenSilently } = useAppAuth();
 
   async function handleUpgrade() {
     if (!isAuthenticated || !user?.sub) {

@@ -6,10 +6,24 @@ import {
 } from "@/lib/auth0-management";
 import { plans, type PlanKey } from "@/lib/plans";
 import { getCurrentUsageMonth, getUserChatData } from "@/lib/postgres";
+import { LOCAL_TEST_USER_ID } from "@/lib/local-test-auth";
 
 export async function GET(request: Request) {
   const userId = await getAuthenticatedUserId(request);
   if (!userId) return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+
+  if (userId === LOCAL_TEST_USER_ID && process.env.NODE_ENV === "development") {
+    return NextResponse.json({
+      name: "Local Test Account",
+      email: "local-test@example.test",
+      phone: "",
+      picture: "",
+      plan: plans.free.name,
+      billingInterval: plans.free.interval,
+      usageLimit: plans.free.usageLimit,
+      usageCount: 0,
+    });
+  }
 
   try {
     const user = await getAuth0User(userId);
@@ -51,6 +65,10 @@ export async function PATCH(request: Request) {
     }
     if (phone.length > 40) {
       return NextResponse.json({ error: "Enter a valid phone number." }, { status: 400 });
+    }
+
+    if (userId === LOCAL_TEST_USER_ID && process.env.NODE_ENV === "development") {
+      return NextResponse.json({ name, phone });
     }
 
     await updateAuth0Profile(

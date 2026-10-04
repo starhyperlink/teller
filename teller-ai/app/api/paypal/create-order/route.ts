@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAuthenticatedUserId } from "@/lib/auth0-management";
 import { getPlanKey, plans } from "@/lib/plans";
+import { LOCAL_TEST_USER_ID } from "@/lib/local-test-auth";
 
 const paypalBaseUrl =
   process.env.PAYPAL_ENVIRONMENT === "production"
@@ -56,6 +57,10 @@ export async function POST(request: Request) {
     const authenticatedUserId = await getAuthenticatedUserId(request);
     const plan = getPlanKey(requestedPlan);
     const zarAmount = plan ? planAmounts[plan] : undefined;
+
+    if (authenticatedUserId === LOCAL_TEST_USER_ID) {
+      return NextResponse.json({ error: "Payments are disabled for the local test account." }, { status: 403 });
+    }
 
     if (authenticatedUserId !== userId) {
       return NextResponse.json({ error: "Unauthorized." }, { status: 401 });

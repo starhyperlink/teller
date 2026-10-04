@@ -1,7 +1,8 @@
 "use client";
 
-import { useAuth0 } from "@auth0/auth0-react";
+import { useAppAuth } from "@/components/Auth0Provider";
 import PayPalUpgradeButton from "@/components/PayPalUpgradeButton";
+import { ArrowUp, Paperclip, X } from "lucide-react";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -217,7 +218,7 @@ export default function ChatWindow() {
   const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
   const [copiedMessage, setCopiedMessage] = useState<number | null>(null);
   const [isMounted, setIsMounted] = useState(false);
-  const { user, isAuthenticated, isLoading: isAuthLoading, loginWithRedirect, logout, getAccessTokenSilently } = useAuth0();
+  const { user, isAuthenticated, isLoading: isAuthLoading, loginWithRedirect, logout, getAccessTokenSilently } = useAppAuth();
   const authReady = isMounted && !isAuthLoading;
   const hasSession = authReady && isAuthenticated;
   const [monthlyChatCount, setMonthlyChatCount] = useState(0);
@@ -783,11 +784,27 @@ export default function ChatWindow() {
           </div>
         </div>
 
-        <div className="border-t border-neutral-800 p-4">
+        <div className="sticky bottom-0 z-20 border-t border-neutral-800/70 bg-neutral-950/85 px-3 py-4 backdrop-blur-xl sm:px-6 sm:py-5">
           <div className="mx-auto max-w-3xl">
             {hasSession ? (
-              <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2">
-                <label className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-lg bg-neutral-800 text-xl" title="Attach file">
+              <div className="rounded-[2rem] border border-neutral-700/80 bg-neutral-900/95 p-2 shadow-[0_12px_40px_rgba(0,0,0,0.35)] transition-colors focus-within:border-neutral-500">
+                {pendingFile && (
+                  <div className="mb-1 flex min-w-0 items-center gap-2 px-3 pt-1 text-xs text-neutral-300">
+                    <Paperclip size={14} aria-hidden="true" />
+                    <span className="min-w-0 flex-1 truncate">{pendingFile.name}</span>
+                    <button
+                      type="button"
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-neutral-400 hover:bg-neutral-800 hover:text-white"
+                      onClick={() => setPendingFile(null)}
+                      aria-label="Remove attachment"
+                      title="Remove attachment"
+                    >
+                      <X size={15} aria-hidden="true" />
+                    </button>
+                  </div>
+                )}
+                <div className="flex min-w-0 items-end gap-2">
+                <label className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-full text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-white" title="Attach file">
                   <input type="file" className="hidden" onChange={async (e) => {
                     const f = e.target.files?.[0];
                     if (!f) return;
@@ -798,12 +815,35 @@ export default function ChatWindow() {
                     };
                     reader.readAsDataURL(f);
                   }} />
-                  📎
+                  <Paperclip size={20} aria-hidden="true" />
                 </label>
 
-                <input className="min-w-0 rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-3 outline-none" placeholder="Ask Teller AI anything..." value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") sendMessage(); }} />
+                <textarea
+                  rows={1}
+                  className="max-h-36 min-h-11 min-w-0 flex-1 resize-none bg-transparent px-2 py-3 text-sm leading-5 text-white outline-none placeholder:text-neutral-500"
+                  placeholder="Ask Teller AI anything..."
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      void sendMessage();
+                    }
+                  }}
+                  aria-label="Message Teller AI"
+                />
 
-                <button onClick={sendMessage} disabled={loading} className="shrink-0 rounded-lg bg-white px-5 py-3 font-medium text-black disabled:opacity-50">Send</button>
+                <button
+                  type="button"
+                  onClick={() => void sendMessage()}
+                  disabled={loading || (!input.trim() && !pendingFile)}
+                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white text-neutral-950 transition-colors hover:bg-neutral-200 disabled:cursor-not-allowed disabled:bg-neutral-700 disabled:text-neutral-400"
+                  aria-label="Send message"
+                  title="Send message"
+                >
+                  <ArrowUp size={21} strokeWidth={2.5} aria-hidden="true" />
+                </button>
+                </div>
               </div>
             ) : (
               <div className="space-y-2">
@@ -813,12 +853,6 @@ export default function ChatWindow() {
               </div>
             )}
           </div>
-          {pendingFile && (
-            <div className="mx-auto mt-2 flex max-w-3xl items-center text-sm text-neutral-300">
-              Attached: <span className="ml-2 truncate">{pendingFile.name}</span>
-              <button className="ml-3 rounded bg-neutral-800 px-2 py-1 text-xs" onClick={() => setPendingFile(null)}>Remove</button>
-            </div>
-          )}
         </div>
       </main>
     </div>

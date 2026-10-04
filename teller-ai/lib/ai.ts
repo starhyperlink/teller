@@ -34,11 +34,11 @@ Format replies for readability:
 const MAX_MESSAGES = 40;
 const MAX_MESSAGE_CHARS = 12_000;
 const MAX_TOTAL_MESSAGE_CHARS = 90_000;
-const MAX_ALLOWED_OUTPUT_TOKENS = 8_192;
+const MAX_ALLOWED_OUTPUT_TOKENS = 2_048;
 
 function getMaxTokens(requestedTokens?: number) {
-  const configuredTokens = Number.parseInt(process.env.AI_MAX_TOKENS || "4096", 10);
-  const defaultTokens = Number.isFinite(configuredTokens) ? configuredTokens : 4096;
+  const configuredTokens = Number.parseInt(process.env.AI_MAX_TOKENS || "2048", 10);
+  const defaultTokens = Number.isFinite(configuredTokens) ? configuredTokens : 2048;
   const tokens = requestedTokens ?? defaultTokens;
   return Math.min(MAX_ALLOWED_OUTPUT_TOKENS, Math.max(256, tokens));
 }

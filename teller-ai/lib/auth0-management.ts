@@ -1,3 +1,5 @@
+import { LOCAL_TEST_ACCESS_TOKEN, LOCAL_TEST_USER_ID } from "@/lib/local-test-auth";
+
 const auth0Domain = process.env.NEXT_PUBLIC_AUTH0_DOMAIN;
 
 function getManagementApiUrl(path: string) {
@@ -96,6 +98,13 @@ export async function updateAuth0Usage(userId: string, usageCount: number, usage
 
 export async function getAuthenticatedUserId(request: Request) {
   const authorization = request.headers.get("authorization");
+  if (
+    process.env.NODE_ENV === "development" &&
+    authorization === `Bearer ${LOCAL_TEST_ACCESS_TOKEN}`
+  ) {
+    return LOCAL_TEST_USER_ID;
+  }
+
   if (!authorization?.startsWith("Bearer ") || !auth0Domain) return null;
 
   const response = await fetch(`https://${auth0Domain}/userinfo`, {

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { updateAuth0Plan } from "@/lib/auth0-management";
 import { plans, type PlanKey } from "@/lib/plans";
+import { LOCAL_TEST_USER_ID } from "@/lib/local-test-auth";
 
 const paypalBaseUrl =
   process.env.PAYPAL_ENVIRONMENT === "production"
@@ -49,6 +50,9 @@ export async function GET(request: Request) {
     const payment = customId ? JSON.parse(customId) as { plan: PlanKey; userId: string } : null;
     if (!payment || !(payment.plan in plans) || !payment.userId) {
       throw new Error("PayPal order is missing account details.");
+    }
+    if (payment.userId === LOCAL_TEST_USER_ID) {
+      return NextResponse.redirect(`${appUrl}/pricing?paypal=local-test-disabled`);
     }
 
     const response = await fetch(

@@ -1,11 +1,11 @@
 "use client";
 
-import { useAuth0 } from "@auth0/auth0-react";
+import { useAppAuth } from "@/components/Auth0Provider";
 import { useRouter } from "next/navigation";
 import PayPalUpgradeButton from "@/components/PayPalUpgradeButton";
 
 export default function PricingPage() {
-  const { isAuthenticated, isLoading, loginWithRedirect } = useAuth0();
+  const { isAuthenticated, isLoading, loginWithRedirect } = useAppAuth();
   const router = useRouter();
 
   async function startFreePlan() {

@@ -1,11 +1,11 @@
 "use client";
 
-import { useAuth0 } from "@auth0/auth0-react";
+import { useAppAuth } from "@/components/Auth0Provider";
 import { useEffect, useState } from "react";
 import PayPalUpgradeButton from "@/components/PayPalUpgradeButton";
 
 export default function SettingsPage() {
-  const { user, isAuthenticated, isLoading, loginWithRedirect, logout, getAccessTokenSilently } = useAuth0();
+  const { user, isAuthenticated, isLoading, loginWithRedirect, logout, getAccessTokenSilently } = useAppAuth();
   const accountId = user?.sub || user?.email || "guest";
   const preferencesKey = `teller_preferences:${accountId}`;
   const [monthlyChatCount, setMonthlyChatCount] = useState(0);
