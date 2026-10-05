@@ -10,6 +10,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 type Message = {
   role: "user" | "assistant";
   content: string;
+  imageUrl?: string;
   file?: {
     name: string;
     type: string;
@@ -34,6 +35,11 @@ function getErrorMessage(error: unknown) {
     return error.message;
   }
   return "The request failed.";
+}
+
+function isImageGenerationPrompt(prompt: string) {
+  return /\b(?:pic|picture|image|photo|artwork|illustration)\b/i.test(prompt) &&
+    /\b(?:make|create|generate|draw|design|show|of|for|with|turn)\b/i.test(prompt);
 }
 
 function normalizeMathExpression(expression: string) {
@@ -251,28 +257,6 @@ export default function ChatWindow() {
   useEffect(() => {
     localStorage.setItem("teller_theme", theme);
   }, [theme]);
-
-  function playReplySound() {
-    try {
-      const AudioContextClass = window.AudioContext ||
-        (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-      if (!AudioContextClass) return;
-      const audioContext = new AudioContextClass();
-      const oscillator = audioContext.createOscillator();
-      const gain = audioContext.createGain();
-      oscillator.type = "sine";
-      oscillator.frequency.setValueAtTime(660, audioContext.currentTime);
-      oscillator.frequency.exponentialRampToValueAtTime(880, audioContext.currentTime + 0.08);
-      gain.gain.setValueAtTime(0.0001, audioContext.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.08, audioContext.currentTime + 0.01);
-      gain.gain.exponentialRampToValueAtTime(0.0001, audioContext.currentTime + 0.16);
-      oscillator.connect(gain);
-      gain.connect(audioContext.destination);
-      oscillator.start();
-      oscillator.stop(audioContext.currentTime + 0.16);
-      oscillator.addEventListener("ended", () => void audioContext.close());
-    } catch {}
-  }
 
   // Load only the current account's histories and monthly usage.
   useEffect(() => {
@@ -492,6 +476,33 @@ export default function ChatWindow() {
     setLoading(true);
 
     try {
+      if (!pendingFile && isImageGenerationPrompt(userMessage.content)) {
+        const imageResponse = await fetch("/api/images/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt: userMessage.content }),
+        });
+        const imageData = await imageResponse.json();
+        if (!imageResponse.ok) {
+          throw new Error(imageData.error || "Image generation failed.");
+        }
+
+        const assistantMessage: Message = {
+          role: "assistant",
+          content: "Here’s the image you asked for.",
+          imageUrl: imageData.imageUrl,
+        };
+        setMessages([...updatedMessages, assistantMessage]);
+        if (activeHistoryId) {
+          setHistories((previous) => previous.map((history) => (
+            history.id === activeHistoryId
+              ? { ...history, messages: [...updatedMessages, assistantMessage], updatedAt: Date.now() }
+              : history
+          )));
+        }
+        return;
+      }
+
       const token = isAuthenticated ? await getAccessTokenSilently() : null;
       const response = await fetch("/api/chat", {
         method: "POST",
@@ -525,7 +536,6 @@ export default function ChatWindow() {
         }
         const assistantMessage: Message = { role: "assistant", content: data.reply, file: null };
         setMessages([...updatedMessages, assistantMessage]);
-        playReplySound();
 
         // If the server returned a suggested title, update the active history
         if (data.title && activeHistoryId) {
@@ -709,9 +719,11 @@ export default function ChatWindow() {
         <header className="sticky top-0 z-30 shrink-0 border-b border-neutral-800 bg-neutral-950/95 p-4 backdrop-blur-md">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <button className="rounded-md bg-neutral-800 px-3 py-2 text-sm md:hidden" onClick={() => setIsSidebarOpen((s) => !s)} aria-label="Toggle sidebar">Menu</button>
-              <button className="hidden items-center gap-2 rounded-md bg-neutral-800 px-3 py-2 text-sm md:inline-flex" onClick={() => setIsHistoryVisible((v) => !v)} aria-label="Toggle history visibility">
-                Menu
+              <button className="flex h-10 w-10 items-center justify-center rounded-md bg-neutral-800 transition hover:bg-neutral-700 md:hidden" onClick={() => setIsSidebarOpen((s) => !s)} aria-label="Open chat menu" title="Open chat menu">
+                <img src="/jupiter-black.svg" alt="" aria-hidden="true" className="h-7 w-7 object-contain" />
+              </button>
+              <button className="hidden h-10 w-10 items-center justify-center rounded-md bg-neutral-800 transition hover:bg-neutral-700 md:inline-flex" onClick={() => setIsHistoryVisible((v) => !v)} aria-label="Toggle history visibility" title="Toggle chat history">
+                <img src="/jupiter-black.svg" alt="" aria-hidden="true" className="h-7 w-7 object-contain" />
               </button>
               <img src="/jupiter-black.svg" alt="Teller AI" className="h-8 w-8 object-contain" />
             </div>
@@ -764,6 +776,13 @@ export default function ChatWindow() {
                 <div className="min-w-0 max-w-full text-sm leading-7 [overflow-wrap:anywhere]">
                   <FormattedMessage content={message.content} showCodeCopy={message.role === "assistant"} onCopyCode={(code) => void copyText(code, index)} />
                 </div>
+                {message.imageUrl && (
+                  <img
+                    src={message.imageUrl}
+                    alt="Generated from your prompt"
+                    className="mt-3 max-h-[min(70vh,640px)] max-w-full rounded-md object-contain"
+                  />
+                )}
                 <div className="mt-3 flex gap-2 border-t border-white/10 pt-2 opacity-70">
                   {message.role === "assistant" ? (
                     <>

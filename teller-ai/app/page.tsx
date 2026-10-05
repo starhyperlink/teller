@@ -3,6 +3,14 @@ import Link from "next/link";
 export default function HomePage() {
   return (
     <main className="min-h-screen bg-neutral-950 text-white">
+      <div className="absolute left-6 top-6 text-left sm:left-10 sm:top-8">
+        <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-neutral-400">
+          Created by
+        </p>
+        <p className="mt-1 text-sm font-semibold tracking-[0.08em] text-white">
+          Sizwe Zitha
+        </p>
+      </div>
       <section className="mx-auto flex min-h-screen max-w-6xl flex-col items-center justify-center px-6 text-center">
         <div className="mb-6 rounded-full border border-neutral-700 px-4 py-2 text-sm text-neutral-300">
           Introducing Teller AI
