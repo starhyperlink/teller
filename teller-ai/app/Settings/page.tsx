@@ -3,6 +3,7 @@
 import { useAppAuth } from "@/components/Auth0Provider";
 import { useEffect, useState } from "react";
 import PayPalUpgradeButton from "@/components/PayPalUpgradeButton";
+import { COUNTRY_OPTIONS, PHONE_CODE_OPTIONS, countryFlag, splitInternationalPhone } from "@/lib/country-options";
 
 export default function SettingsPage() {
   const { user, isAuthenticated, isLoading, loginWithRedirect, logout, getAccessTokenSilently } = useAppAuth();
@@ -14,14 +15,17 @@ export default function SettingsPage() {
   const [aiResponsesEnabled, setAiResponsesEnabled] = useState(true);
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
   const [saveMessage, setSaveMessage] = useState("");
-  const [name, setName] = useState(user?.name || "");
-  const [phone, setPhone] = useState("");
+  const [firstName, setFirstName] = useState(user?.given_name || user?.name?.split(" ")[0] || "");
+  const [surname, setSurname] = useState(user?.family_name || user?.name?.split(" ").slice(1).join(" ") || "");
+  const [country, setCountry] = useState("");
+  const [phoneCountry, setPhoneCountry] = useState("US");
+  const [phoneNumber, setPhoneNumber] = useState("");
   const [profileMessage, setProfileMessage] = useState("");
   const [profileError, setProfileError] = useState("");
   const [isSavingProfile, setIsSavingProfile] = useState(false);
 
   const accountProfile = {
-    name: name || user?.name || "Teller User",
+    name: [firstName, surname].filter(Boolean).join(" ") || user?.name || "Teller User",
     email: user?.email || "user@example.com",
     picture:
       user?.picture ||
@@ -52,8 +56,18 @@ export default function SettingsPage() {
         });
         if (!response.ok) return;
         const account = await response.json();
-        setName(account.name || user?.name || "");
-        setPhone(account.phone || "");
+        setFirstName(account.firstName || user?.given_name || account.name?.split(" ")[0] || "");
+        setSurname(account.surname || user?.family_name || account.name?.split(" ").slice(1).join(" ") || "");
+        setCountry(account.country || "");
+        const parsedPhone = splitInternationalPhone(account.phone || "");
+        const matchedPhoneCountry = PHONE_CODE_OPTIONS.find(
+          (option) => option.code === account.phoneCountry && option.dialCode === parsedPhone.phoneCountryCode,
+        );
+        const selectedPhoneCountry = matchedPhoneCountry || PHONE_CODE_OPTIONS.find(
+          (option) => option.dialCode === parsedPhone.phoneCountryCode,
+        );
+        setPhoneCountry(selectedPhoneCountry?.code || "US");
+        setPhoneNumber(parsedPhone.phoneNumber);
         setPlanName(account.plan);
         setUsageLimit(account.usageLimit);
         if (Number.isInteger(account.usageCount)) setMonthlyChatCount(account.usageCount);
@@ -83,12 +97,15 @@ export default function SettingsPage() {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ name, phone }),
+        body: JSON.stringify({ firstName, surname, country, phoneCountry, phoneNumber }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.detail || result.error || "Could not update profile.");
-      setName(result.name);
-      setPhone(result.phone);
+      setFirstName(result.firstName);
+      setSurname(result.surname);
+      setCountry(result.country);
+      setPhoneCountry(result.phoneCountry);
+      setPhoneNumber(result.phoneNumber);
       setProfileMessage("Profile saved");
     } catch (error) {
       setProfileError(error instanceof Error ? error.message : "Could not update profile.");
@@ -131,30 +148,78 @@ export default function SettingsPage() {
           <section className="rounded-xl border border-neutral-800 bg-neutral-950 p-5">
             <h2 className="text-lg font-semibold">Personal details</h2>
             <div className="mt-4 space-y-4 text-sm text-neutral-300">
-              <label className="block">
-                <span className="mb-2 block">Name</span>
-                <input
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                  disabled={!isAuthenticated || isSavingProfile}
-                  className="w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-white outline-none focus:border-white disabled:opacity-60"
-                />
-              </label>
+              <div className="grid max-w-xl grid-cols-1 gap-3 sm:grid-cols-2">
+                <label className="block">
+                  <span className="mb-1.5 block">Name</span>
+                  <input
+                    autoComplete="given-name"
+                    value={firstName}
+                    onChange={(event) => setFirstName(event.target.value)}
+                    disabled={!isAuthenticated || isSavingProfile}
+                    className="h-9 w-full rounded-md border border-neutral-700 bg-neutral-900 px-3 text-white outline-none focus:border-white disabled:opacity-60"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1.5 block">Surname</span>
+                  <input
+                    autoComplete="family-name"
+                    value={surname}
+                    onChange={(event) => setSurname(event.target.value)}
+                    disabled={!isAuthenticated || isSavingProfile}
+                    className="h-9 w-full rounded-md border border-neutral-700 bg-neutral-900 px-3 text-white outline-none focus:border-white disabled:opacity-60"
+                  />
+                </label>
+              </div>
               <div className="border-b border-neutral-800 pb-3">
                 <span>Email</span>
                 <span className="float-right text-neutral-100">{accountProfile.email}</span>
               </div>
-              <label className="block">
-                <span className="mb-2 block">Phone</span>
-                <input
-                  type="tel"
-                  value={phone}
-                  onChange={(event) => setPhone(event.target.value)}
+              <label className="block max-w-xl">
+                <span className="mb-1.5 block">Country</span>
+                <select
+                  value={country}
+                  onChange={(event) => {
+                    setCountry(event.target.value);
+                    const selectedCountry = COUNTRY_OPTIONS.find((option) => option.code === event.target.value);
+                    if (selectedCountry) setPhoneCountry(selectedCountry.code);
+                  }}
                   disabled={!isAuthenticated || isSavingProfile}
-                  placeholder="Add a phone number"
-                  className="w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-white outline-none focus:border-white disabled:opacity-60"
-                />
+                  className="h-9 w-full rounded-md border border-neutral-700 bg-neutral-900 px-3 text-white outline-none focus:border-white disabled:opacity-60"
+                >
+                  <option value="">Select a country</option>
+                  {COUNTRY_OPTIONS.map((option) => (
+                    <option key={option.code} value={option.code}>{option.name}</option>
+                  ))}
+                </select>
               </label>
+              <div className="max-w-xl">
+                <label className="mb-1.5 block" htmlFor="phone-number">Phone</label>
+                <div className="flex max-w-md gap-2">
+                  <select
+                    aria-label="Phone country calling code"
+                    value={phoneCountry}
+                    onChange={(event) => setPhoneCountry(event.target.value)}
+                    disabled={!isAuthenticated || isSavingProfile}
+                    className="h-9 w-36 shrink-0 rounded-md border border-neutral-700 bg-neutral-900 px-2 text-white outline-none focus:border-white disabled:opacity-60"
+                  >
+                    {PHONE_CODE_OPTIONS.map((option) => (
+                      <option key={option.code} value={option.code}>
+                        {countryFlag(option.code)} {option.dialCode} {option.name}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    id="phone-number"
+                    type="tel"
+                    autoComplete="tel-national"
+                    value={phoneNumber}
+                    onChange={(event) => setPhoneNumber(event.target.value)}
+                    disabled={!isAuthenticated || isSavingProfile}
+                    placeholder="Phone number"
+                    className="h-9 min-w-0 flex-1 rounded-md border border-neutral-700 bg-neutral-900 px-3 text-white outline-none focus:border-white disabled:opacity-60"
+                  />
+                </div>
+              </div>
               <div className="flex items-center justify-between">
                 <span>Plan</span>
                 <span className="text-neutral-100">{planName}</span>

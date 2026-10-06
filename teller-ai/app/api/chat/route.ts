@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { callTellerAI } from "@/lib/ai";
-import { getAuthenticatedUserId } from "@/lib/auth0-management";
+import { getAuth0User, getAuthenticatedUserId } from "@/lib/auth0-management";
 import { incrementUserUsage } from "@/lib/postgres";
 import { LOCAL_TEST_USER_ID } from "@/lib/local-test-auth";
+import { COUNTRY_OPTIONS } from "@/lib/country-options";
 
 export const runtime = "nodejs";
 
@@ -19,7 +20,20 @@ export async function POST(req: Request) {
       );
     }
 
-    const reply = await callTellerAI(messages);
+    let country: string | undefined;
+    if (userId && userId !== LOCAL_TEST_USER_ID) {
+      try {
+        const profile = await getAuth0User(userId);
+        const countryCode = profile.user_metadata?.country;
+        if (typeof countryCode === "string") {
+          country = COUNTRY_OPTIONS.find((option) => option.code === countryCode)?.name;
+        }
+      } catch (error) {
+        console.error("Could not load country context for chat:", error);
+      }
+    }
+
+    const reply = await callTellerAI(messages, { country });
 
       // Ask the AI for a short title summarizing the conversation
       let title: string | null = null;

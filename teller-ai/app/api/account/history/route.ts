@@ -114,7 +114,7 @@ async function toClientHistory(history: ReturnType<typeof sanitizeHistory>, user
       messages: await Promise.all(
         item.messages.map(async (message) => {
           const file = message.file as StoredFile | undefined;
-          const imageStoragePath = typeof message.imageStoragePath === "string"
+          const imageStoragePath = "imageStoragePath" in message && typeof message.imageStoragePath === "string"
             ? message.imageStoragePath.slice("postgres:".length)
             : "";
           if (/^[0-9a-f-]{36}$/i.test(imageStoragePath)) {

@@ -39,16 +39,25 @@ export async function getAuth0User(userId: string) {
   return response.json() as Promise<{
     user_id: string;
     name?: string;
+    given_name?: string;
+    family_name?: string;
     email?: string;
     phone_number?: string;
     picture?: string;
     app_metadata?: Record<string, unknown>;
+    user_metadata?: Record<string, unknown>;
   }>;
 }
 
 export async function updateAuth0Profile(
   userId: string,
-  profile: { name: string; phone_number?: string }
+  profile: {
+    name: string;
+    given_name: string;
+    family_name: string;
+    phone_number?: string;
+    user_metadata: Record<string, unknown>;
+  }
 ) {
   const token = await getManagementToken();
   const response = await fetch(getManagementApiUrl(`/users/${encodeURIComponent(userId)}`), {

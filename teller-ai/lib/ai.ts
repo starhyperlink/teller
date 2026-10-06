@@ -65,7 +65,7 @@ function prepareMessages(messages: { role: string; content: string }[]) {
 
 export async function callTellerAI(
   messages: { role: string; content: string }[],
-  options?: { maxTokens?: number },
+  options?: { maxTokens?: number; country?: string },
 ) {
   const preparedMessages = prepareMessages(messages);
   const response = await fetch(process.env.AI_API_BASE_URL as string, {
@@ -80,7 +80,12 @@ export async function callTellerAI(
       messages: [
         {
           role: "system",
-          content: TELLER_AI_SYSTEM_PROMPT,
+          content: [
+            TELLER_AI_SYSTEM_PROMPT,
+            options?.country
+              ? `The authenticated user's country is ${options.country}. When a question depends on location, use this country's laws, services, currency, spelling, units, and local context. Do not force localization when it is irrelevant, and follow a different location if the user explicitly asks about one.`
+              : "",
+          ].filter(Boolean).join("\n\n"),
         },
         ...preparedMessages,
       ],

@@ -47,6 +47,7 @@ export async function POST(request: Request) {
 
   try {
     const audioBase64 = Buffer.from(await audio.arrayBuffer()).toString("base64");
+    const audioFormat = mimeType === "audio/wav" || mimeType === "audio/x-wav" ? "wav" : "mp3";
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -69,8 +70,8 @@ export async function POST(request: Request) {
                 text: "Transcribe this speech into clean, readable text. Add punctuation, remove filler words and false starts, and return only the transcription.",
               },
               {
-                type: "audio_url",
-                audio_url: { url: `data:${mimeType};base64,${audioBase64}` },
+                type: "input_audio",
+                input_audio: { data: audioBase64, format: audioFormat },
               },
             ],
           },
@@ -94,6 +95,12 @@ export async function POST(request: Request) {
     const transcription = result.choices?.[0]?.message?.content;
     if (typeof transcription !== "string" || !transcription.trim()) {
       return NextResponse.json({ error: "No speech was detected. Try speaking again." }, { status: 422 });
+    }
+    if (/\bplease provide\b/i.test(transcription) && /\b(audio|recording|speech file)\b/i.test(transcription)) {
+      return NextResponse.json(
+        { error: "The model did not detect the recording. Hold the button while speaking and try again." },
+        { status: 422 },
+      );
     }
 
     return NextResponse.json({ transcription: transcription.trim() });
