@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { getAuthenticatedUserId } from "@/lib/auth0-management";
-import { getFirebaseAdmin } from "@/lib/firebase-admin";
-import { getUserChatData, saveUserChatHistory } from "@/lib/postgres";
+import {
+  getUserChatData,
+  getUserChatMedia,
+  saveUserChatHistory,
+  saveUserChatMedia,
+} from "@/lib/postgres";
 
 export const runtime = "nodejs";
 
@@ -47,7 +51,11 @@ function sanitizeHistory(value: unknown[]) {
                 role: message.role === "user" ? "user" : "assistant",
                 content: typeof message.content === "string" ? message.content.slice(0, 4000) : "",
                 ...(sanitizedFile ? { file: sanitizedFile } : {}),
-                ...(typeof message.imageUrl === "string" ? { imageUrl: message.imageUrl.slice(0, 2000) } : {}),
+                ...(typeof message.imageStoragePath === "string" && message.imageStoragePath.startsWith("postgres:")
+                  ? { imageStoragePath: message.imageStoragePath.slice(0, 100) }
+                  : typeof message.imageUrl === "string"
+                    ? { imageUrl: message.imageUrl.slice(0, 2000) }
+                    : {}),
               };
             })
         : [],
@@ -60,47 +68,78 @@ function parseDataUrl(dataUrl: string) {
   return { contentType: match[1] || "application/octet-stream", buffer: Buffer.from(match[2], "base64") };
 }
 
-async function storeMedia(history: ReturnType<typeof sanitizeHistory>, userId: string, bucket: ReturnType<typeof getFirebaseAdmin>["bucket"]) {
+async function storeMedia(history: ReturnType<typeof sanitizeHistory>, userId: string) {
   return Promise.all(
     history.map(async (item) => ({
       ...item,
       messages: await Promise.all(
         item.messages.map(async (message) => {
           const file = message.file as StoredFile | undefined;
-          if (!file?.dataUrl) return message;
+          if (!file) return message;
+          if (file.storagePath?.startsWith("postgres:")) {
+            return {
+              ...message,
+              file: {
+                name: file.name,
+                type: file.type,
+                size: file.size,
+                storagePath: file.storagePath,
+              },
+            };
+          }
+          if (!file.dataUrl) return message;
           const parsed = parseDataUrl(file.dataUrl);
           if (!parsed) return message;
-          const storagePath = `users/${encodeURIComponent(userId)}/chat-media/${item.id}/${crypto.randomUUID()}`;
-          await bucket.file(storagePath).save(parsed.buffer, {
-            metadata: { contentType: file.type || parsed.contentType },
-          });
-          return { ...message, file: { name: file.name, type: file.type, size: file.size, storagePath } };
+          const contentType = file.type || parsed.contentType;
+          const mediaId = await saveUserChatMedia(userId, item.id, file.name, contentType, parsed.buffer);
+          return {
+            ...message,
+            file: {
+              name: file.name,
+              type: contentType,
+              size: parsed.buffer.length,
+              storagePath: `postgres:${mediaId}`,
+            },
+          };
         }),
       ),
     })),
   );
 }
 
-async function toClientHistory(history: ReturnType<typeof sanitizeHistory>, bucket: ReturnType<typeof getFirebaseAdmin>["bucket"]) {
+async function toClientHistory(history: ReturnType<typeof sanitizeHistory>, userId: string) {
   return Promise.all(
     history.map(async (item) => ({
       ...item,
       messages: await Promise.all(
         item.messages.map(async (message) => {
           const file = message.file as StoredFile | undefined;
-          if (!file?.storagePath) return message;
-          const [dataUrl] = await bucket.file(file.storagePath).getSignedUrl({
-            action: "read",
-            expires: Date.now() + 60 * 60 * 1000,
-          });
+          const imageStoragePath = typeof message.imageStoragePath === "string"
+            ? message.imageStoragePath.slice("postgres:".length)
+            : "";
+          if (/^[0-9a-f-]{36}$/i.test(imageStoragePath)) {
+            const media = await getUserChatMedia(userId, imageStoragePath);
+            if (media) {
+              message = {
+                ...message,
+                imageUrl: `data:${media.contentType};base64,${media.mediaData.toString("base64")}`,
+              };
+            }
+          }
+          const mediaId = file?.storagePath?.startsWith("postgres:")
+            ? file.storagePath.slice("postgres:".length)
+            : "";
+          if (!file || !/^[0-9a-f-]{36}$/i.test(mediaId)) return message;
+          const media = await getUserChatMedia(userId, mediaId);
+          if (!media) return message;
           return {
             ...message,
             file: {
-              name: file.name,
-              type: file.type,
-              size: file.size,
+              name: media.fileName,
+              type: media.contentType,
+              size: media.fileSize,
               storagePath: file.storagePath,
-              dataUrl,
+              dataUrl: `data:${media.contentType};base64,${media.mediaData.toString("base64")}`,
             },
           };
         }),
@@ -114,10 +153,9 @@ export async function GET(request: Request) {
   if (!userId) return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
 
   try {
-    const { bucket } = getFirebaseAdmin();
     const chatData = await getUserChatData(userId);
     const history = chatData
-      ? await toClientHistory(sanitizeHistory(chatData.history), bucket)
+      ? await toClientHistory(sanitizeHistory(chatData.history), userId)
       : [];
     return NextResponse.json({ history });
   } catch (error) {
@@ -136,8 +174,7 @@ export async function PUT(request: Request) {
       return NextResponse.json({ error: "Invalid chat history." }, { status: 400 });
     }
 
-    const { bucket } = getFirebaseAdmin();
-    const history = await storeMedia(sanitizeHistory(body.history), userId, bucket);
+    const history = await storeMedia(sanitizeHistory(body.history), userId);
     await saveUserChatHistory(userId, history);
     return NextResponse.json({ ok: true });
   } catch (error) {

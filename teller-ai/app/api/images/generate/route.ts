@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { generateImageWithMcp } from "@/lib/hf-image-mcp";
-import { saveGeneratedImage } from "@/lib/postgres";
+import { getAuthenticatedUserId } from "@/lib/auth0-management";
+import { saveUserChatMedia } from "@/lib/postgres";
 
 export const runtime = "nodejs";
 
@@ -18,6 +19,11 @@ const resolutions = new Set([
 
 export async function POST(request: Request) {
   try {
+    const userId = await getAuthenticatedUserId(request);
+    if (!userId) {
+      return NextResponse.json({ error: "Log in to generate and save images." }, { status: 401 });
+    }
+
     const body = await request.json();
     const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
     const resolution = typeof body.resolution === "string" ? body.resolution : "";
@@ -33,10 +39,26 @@ export async function POST(request: Request) {
     }
 
     const image = await generateImageWithMcp(prompt, resolution);
-    const imageId = await saveGeneratedImage(image.prompt, image.imageUrl);
+    const dataUrl = image.imageUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,([\s\S]+)$/);
+    if (!dataUrl) {
+      return NextResponse.json(
+        { error: "The image provider returned an image format that cannot be stored." },
+        { status: 502 },
+      );
+    }
+
+    const imageBytes = Buffer.from(dataUrl[2], "base64");
+    const mediaId = await saveUserChatMedia(
+      userId,
+      typeof body.historyId === "string" ? body.historyId.slice(0, 100) : "generated",
+      "generated-image",
+      dataUrl[1],
+      imageBytes,
+    );
     return NextResponse.json({
+      imageUrl: `data:${dataUrl[1]};base64,${imageBytes.toString("base64")}`,
+      imageStoragePath: `postgres:${mediaId}`,
       prompt: image.prompt,
-      imageUrl: `/api/images/${imageId}`,
     });
   } catch (error) {
     console.error("Image generation API error:", error);

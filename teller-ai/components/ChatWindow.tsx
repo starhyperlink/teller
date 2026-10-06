@@ -2,7 +2,7 @@
 
 import { useAppAuth } from "@/components/Auth0Provider";
 import PayPalUpgradeButton from "@/components/PayPalUpgradeButton";
-import { ArrowUp, Paperclip, X } from "lucide-react";
+import { ArrowUp, LoaderCircle, Mic, Paperclip, X } from "lucide-react";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -11,6 +11,7 @@ type Message = {
   role: "user" | "assistant";
   content: string;
   imageUrl?: string;
+  imageStoragePath?: string;
   file?: {
     name: string;
     type: string;
@@ -28,6 +29,23 @@ type HistoryItem = {
 };
 
 type Theme = "auto" | "dark" | "light";
+
+type SpeechRecognitionResultLike = { 0: { transcript: string } };
+type SpeechRecognitionEventLike = { results: ArrayLike<SpeechRecognitionResultLike> };
+type SpeechRecognitionLike = {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  onerror: ((event: { error: string }) => void) | null;
+  start: () => void;
+  stop: () => void;
+};
+type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
+type SpeechRecognitionWindow = Window & {
+  SpeechRecognition?: SpeechRecognitionConstructor;
+  webkitSpeechRecognition?: SpeechRecognitionConstructor;
+};
 
 function getErrorMessage(error: unknown) {
   if (error instanceof Error) return error.message;
@@ -214,8 +232,20 @@ export default function ChatWindow() {
   const historyHydratedRef = useRef(false);
 
   const [input, setInput] = useState("");
+  const [speechPreview, setSpeechPreview] = useState("");
+  const [speechError, setSpeechError] = useState("");
+  const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
   const [loading, setLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const holdTimerRef = useRef<number | null>(null);
+  const voicePressActiveRef = useRef(false);
+  const suppressClickRef = useRef(false);
+  const isRecordingRef = useRef(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioStreamRef = useRef<MediaStream | null>(null);
+  const speechRecognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const speechTranscriptRef = useRef("");
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isHistoryVisible, setIsHistoryVisible] = useState(true);
   const [pendingFile, setPendingFile] = useState<Message["file"] | null>(null);
@@ -245,7 +275,7 @@ export default function ChatWindow() {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, loading]);
+  }, [messages, loading, speechPreview, isRecording, isTranscribing]);
 
   useEffect(() => {
     const savedTheme = localStorage.getItem("teller_theme") as Theme | null;
@@ -388,7 +418,16 @@ export default function ChatWindow() {
             Authorization: `Bearer ${token}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ history: histories }),
+          body: JSON.stringify({
+            history: histories.map((history) => ({
+              ...history,
+              messages: history.messages.map((message) => (
+                message.imageStoragePath
+                  ? { ...message, imageUrl: undefined }
+                  : message
+              )),
+            })),
+          }),
         }),
       )
       .then((response) => {
@@ -459,13 +498,13 @@ export default function ChatWindow() {
     setIsSidebarOpen(false);
   }
 
-  async function sendMessage() {
-    if (!input.trim()) return;
+  async function sendMessage(messageText = input) {
+    if (!messageText.trim()) return;
     if (monthlyChatCount >= usageLimit) return;
 
     const userMessage: Message = {
       role: "user",
-      content: input,
+      content: messageText.trim(),
       file: pendingFile,
     };
 
@@ -473,14 +512,19 @@ export default function ChatWindow() {
 
     setMessages(updatedMessages);
     setInput("");
+    setSpeechPreview("");
     setLoading(true);
 
     try {
       if (!pendingFile && isImageGenerationPrompt(userMessage.content)) {
+        const token = isAuthenticated ? await getAccessTokenSilently() : null;
         const imageResponse = await fetch("/api/images/generate", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt: userMessage.content }),
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ prompt: userMessage.content, historyId: activeHistoryId }),
         });
         const imageData = await imageResponse.json();
         if (!imageResponse.ok) {
@@ -491,6 +535,7 @@ export default function ChatWindow() {
           role: "assistant",
           content: "Here’s the image you asked for.",
           imageUrl: imageData.imageUrl,
+          imageStoragePath: imageData.imageStoragePath,
         };
         setMessages([...updatedMessages, assistantMessage]);
         if (activeHistoryId) {
@@ -603,6 +648,158 @@ export default function ChatWindow() {
     } finally {
       setLoading(false);
       setPendingFile(null);
+    }
+  }
+
+  async function startVoiceInput() {
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+      setSpeechError("Voice recording is not supported in this browser.");
+      return;
+    }
+
+    const typedPrefix = input.trim();
+    speechTranscriptRef.current = "";
+    setSpeechError("");
+    setSpeechPreview(typedPrefix);
+
+    let stream: MediaStream | null = null;
+    try {
+      const activeStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream = activeStream;
+      if (!voicePressActiveRef.current) {
+        activeStream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+
+      const supportedMimeType = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"]
+        .find((mimeType) => MediaRecorder.isTypeSupported(mimeType));
+      const recorder = new MediaRecorder(activeStream, supportedMimeType ? { mimeType: supportedMimeType } : undefined);
+      const chunks: BlobPart[] = [];
+      mediaRecorderRef.current = recorder;
+      audioStreamRef.current = activeStream;
+
+      const speechWindow = window as SpeechRecognitionWindow;
+      const SpeechRecognition = speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition;
+      if (SpeechRecognition) {
+        const recognition = new SpeechRecognition();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = navigator.language;
+        recognition.onresult = (event) => {
+          let transcript = "";
+          for (let index = 0; index < event.results.length; index += 1) {
+            transcript += event.results[index][0].transcript;
+          }
+          speechTranscriptRef.current = transcript.trim();
+          setSpeechPreview([typedPrefix, transcript.trim()].filter(Boolean).join(" "));
+        };
+        recognition.onerror = () => {
+          setSpeechError("Live captions stopped. The recording will still be transcribed when you release.");
+        };
+        speechRecognitionRef.current = recognition;
+        try {
+          recognition.start();
+        } catch {
+          speechRecognitionRef.current = null;
+          setSpeechError("Live captions are unavailable; the recording will be transcribed when you release.");
+        }
+      } else {
+        setSpeechError("Live captions are unavailable; the recording will be transcribed when you release.");
+      }
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) chunks.push(event.data);
+      };
+      recorder.onstop = async () => {
+        activeStream.getTracks().forEach((track) => track.stop());
+        mediaRecorderRef.current = null;
+        audioStreamRef.current = null;
+        speechRecognitionRef.current = null;
+
+        const recording = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+        if (!recording.size) {
+          setIsTranscribing(false);
+          setSpeechPreview("");
+          setSpeechError("No audio was recorded. Hold the button while speaking and try again.");
+          return;
+        }
+
+        setIsTranscribing(true);
+        setSpeechPreview((preview) => preview || "Transcribing audio...");
+        try {
+          const token = await getAccessTokenSilently();
+          const formData = new FormData();
+          formData.append("audio", recording, "speech");
+          const response = await fetch("/api/transcribe", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}` },
+            body: formData,
+          });
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.error || "Transcription failed.");
+
+          const transcription = typeof result.transcription === "string" ? result.transcription.trim() : "";
+          if (!transcription) throw new Error("No speech was detected. Try speaking again.");
+          const prompt = [typedPrefix, transcription].filter(Boolean).join(" ");
+          setSpeechError("");
+          setIsTranscribing(false);
+          void sendMessage(prompt);
+        } catch (error) {
+          setIsTranscribing(false);
+          setSpeechPreview("");
+          const liveTranscript = speechTranscriptRef.current.trim();
+          if (liveTranscript) {
+            setSpeechError("");
+            void sendMessage([typedPrefix, liveTranscript].filter(Boolean).join(" "));
+          } else {
+            setInput(typedPrefix);
+            setSpeechError(getErrorMessage(error));
+          }
+        }
+      };
+
+      recorder.start();
+      isRecordingRef.current = true;
+      setIsRecording(true);
+      setSpeechPreview(typedPrefix);
+    } catch (error) {
+      stream?.getTracks().forEach((track) => track.stop());
+      isRecordingRef.current = false;
+      setIsRecording(false);
+      setSpeechPreview("");
+      setSpeechError(error instanceof Error && error.name === "NotAllowedError"
+        ? "Allow microphone access to use voice input."
+        : "Could not start voice recording. Please try again.");
+    }
+  }
+
+  function beginHoldToSpeak() {
+    if (loading || isTranscribing) return;
+    voicePressActiveRef.current = true;
+    suppressClickRef.current = false;
+    holdTimerRef.current = window.setTimeout(() => {
+      holdTimerRef.current = null;
+      if (!voicePressActiveRef.current) return;
+      suppressClickRef.current = true;
+      void startVoiceInput();
+    }, 300);
+  }
+
+  function finishHoldToSpeak() {
+    voicePressActiveRef.current = false;
+    if (holdTimerRef.current !== null) {
+      window.clearTimeout(holdTimerRef.current);
+      holdTimerRef.current = null;
+    }
+    try {
+      speechRecognitionRef.current?.stop();
+    } catch {
+      speechRecognitionRef.current = null;
+    }
+    if (isRecordingRef.current && mediaRecorderRef.current?.state === "recording") {
+      isRecordingRef.current = false;
+      setIsRecording(false);
+      mediaRecorderRef.current.stop();
     }
   }
 
@@ -795,6 +992,17 @@ export default function ChatWindow() {
               </div>
             ))}
 
+            {(speechPreview || isRecording || isTranscribing) && (
+              <div className="ml-auto max-w-[85%] overflow-hidden rounded-xl bg-blue-600 p-4 [overflow-wrap:anywhere]" aria-live="polite">
+                <div className="text-sm leading-7">{speechPreview || (isRecording ? "Listening..." : "Transcribing audio...")}</div>
+                {(isRecording || isTranscribing) && (
+                  <div className="mt-3 border-t border-white/10 pt-2 text-xs text-blue-100">
+                    {isRecording ? "Listening..." : "Transcribing audio..."}
+                  </div>
+                )}
+              </div>
+            )}
+
             {loading && (
               <div className="mr-auto max-w-[85%] rounded-xl bg-neutral-800 p-4 [overflow-wrap:anywhere]">Teller AI is thinking...</div>
             )}
@@ -842,6 +1050,7 @@ export default function ChatWindow() {
                   className="max-h-36 min-h-11 min-w-0 flex-1 resize-none bg-transparent px-2 py-3 text-sm leading-5 text-white outline-none placeholder:text-neutral-500"
                   placeholder="Ask Teller AI anything..."
                   value={input}
+                  disabled={isRecording || isTranscribing || loading}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && !e.shiftKey) {
@@ -854,15 +1063,37 @@ export default function ChatWindow() {
 
                 <button
                   type="button"
-                  onClick={() => void sendMessage()}
-                  disabled={loading || (!input.trim() && !pendingFile)}
-                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white text-neutral-950 transition-colors hover:bg-neutral-200 disabled:cursor-not-allowed disabled:bg-neutral-700 disabled:text-neutral-400"
-                  aria-label="Send message"
-                  title="Send message"
+                  onPointerDown={(event) => {
+                    event.currentTarget.setPointerCapture(event.pointerId);
+                    beginHoldToSpeak();
+                  }}
+                  onPointerUp={finishHoldToSpeak}
+                  onPointerCancel={() => {
+                    suppressClickRef.current = false;
+                    finishHoldToSpeak();
+                  }}
+                  onClick={() => {
+                    if (suppressClickRef.current) {
+                      suppressClickRef.current = false;
+                      return;
+                    }
+                    void sendMessage();
+                  }}
+                  disabled={loading || isTranscribing}
+                  className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed disabled:bg-neutral-700 disabled:text-neutral-400 ${isRecording ? "bg-red-500 text-white hover:bg-red-400" : "bg-white text-neutral-950 hover:bg-neutral-200"}`}
+                  aria-label={isRecording ? "Release to transcribe" : "Send message or hold to speak"}
+                  title={isRecording ? "Release to transcribe" : "Click to send, hold to speak"}
                 >
-                  <ArrowUp size={21} strokeWidth={2.5} aria-hidden="true" />
+                  {isTranscribing ? (
+                    <LoaderCircle size={20} className="animate-spin" aria-hidden="true" />
+                  ) : input.trim() || pendingFile ? (
+                    <ArrowUp size={21} strokeWidth={2.5} aria-hidden="true" />
+                  ) : (
+                    <Mic size={20} aria-hidden="true" />
+                  )}
                 </button>
                 </div>
+                {speechError && <p className="px-3 pt-2 text-xs text-rose-300" role="alert">{speechError}</p>}
               </div>
             ) : (
               <div className="space-y-2">

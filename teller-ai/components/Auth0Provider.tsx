@@ -7,8 +7,7 @@ import type {
   RedirectLoginOptions,
   User,
 } from "@auth0/auth0-react";
-import { createContext, useCallback, useContext, useEffect, useMemo, useSyncExternalStore, type ReactNode } from "react";
-import { getFirebaseAnalytics } from "@/lib/firebase";
+import { createContext, useCallback, useContext, useMemo, useSyncExternalStore, type ReactNode } from "react";
 import { LOCAL_TEST_ACCESS_TOKEN, LOCAL_TEST_USER_ID } from "@/lib/local-test-auth";
 
 const domain = process.env.NEXT_PUBLIC_AUTH0_DOMAIN;
@@ -99,10 +98,6 @@ function LocalTestAuthProvider({ children }: { children: ReactNode }) {
 }
 
 export function AppAuthProvider({ children }: { children: ReactNode }) {
-  useEffect(() => {
-    void getFirebaseAnalytics();
-  }, []);
-
   if (process.env.NODE_ENV === "development") {
     return <LocalTestAuthProvider>{children}</LocalTestAuthProvider>;
   }

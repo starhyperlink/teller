@@ -11,12 +11,6 @@ const globalForPostgres = globalThis as typeof globalThis & {
   tellerPostgresSchema?: Promise<void>;
 };
 
-export type GeneratedImageRecord = {
-  imageData: Buffer | null;
-  mimeType: string;
-  sourceUrl: string | null;
-};
-
 function getPool() {
   if (!globalForPostgres.tellerPostgresPool) {
     const connectionString = process.env.DATABASE_URL;
@@ -28,69 +22,34 @@ function getPool() {
 
 async function ensureSchema() {
   if (!globalForPostgres.tellerPostgresSchema) {
-    globalForPostgres.tellerPostgresSchema = (async () => {
+    globalForPostgres.tellerPostgresSchema = getPool().query(`
+      CREATE TABLE IF NOT EXISTS teller_user_chat_data (
+        user_id TEXT PRIMARY KEY,
+        usage_month TEXT NOT NULL,
+        usage_count INTEGER NOT NULL DEFAULT 0 CHECK (usage_count >= 0),
+        history JSONB NOT NULL DEFAULT '[]'::jsonb,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `).then(async () => {
       await getPool().query(`
-        CREATE TABLE IF NOT EXISTS teller_user_chat_data (
-          user_id TEXT PRIMARY KEY,
-          usage_month TEXT NOT NULL,
-          usage_count INTEGER NOT NULL DEFAULT 0 CHECK (usage_count >= 0),
-          history JSONB NOT NULL DEFAULT '[]'::jsonb,
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        CREATE TABLE IF NOT EXISTS teller_chat_media (
+          id UUID PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          history_id TEXT NOT NULL,
+          file_name TEXT NOT NULL,
+          content_type TEXT NOT NULL,
+          file_size INTEGER NOT NULL,
+          media_data BYTEA NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
       `);
       await getPool().query(`
-        CREATE TABLE IF NOT EXISTS teller_generated_images (
-          id TEXT PRIMARY KEY,
-          prompt TEXT NOT NULL,
-          image_data BYTEA,
-          mime_type TEXT NOT NULL,
-          source_url TEXT,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          CHECK (image_data IS NOT NULL OR source_url IS NOT NULL)
-        )
+        CREATE INDEX IF NOT EXISTS teller_chat_media_user_history_idx
+        ON teller_chat_media (user_id, history_id)
       `);
-    })();
+    });
   }
   await globalForPostgres.tellerPostgresSchema;
-}
-
-export async function saveGeneratedImage(prompt: string, imageUrl: string) {
-  await ensureSchema();
-  const id = crypto.randomUUID();
-  const dataUrlMatch = imageUrl.match(/^data:([^;,]+);base64,([\s\S]+)$/);
-  const imageData = dataUrlMatch ? Buffer.from(dataUrlMatch[2], "base64") : null;
-  const mimeType = dataUrlMatch?.[1] || "image/png";
-  const sourceUrl = imageData ? null : imageUrl;
-
-  if (!imageData && (!sourceUrl || !sourceUrl.startsWith("https://"))) {
-    throw new Error("The image provider returned an unsupported image URL.");
-  }
-
-  await getPool().query(
-    `INSERT INTO teller_generated_images (id, prompt, image_data, mime_type, source_url)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [id, prompt, imageData, mimeType, sourceUrl],
-  );
-  return id;
-}
-
-export async function getGeneratedImage(id: string): Promise<GeneratedImageRecord | null> {
-  await ensureSchema();
-  const result = await getPool().query<{
-    image_data: Buffer | null;
-    mime_type: string;
-    source_url: string | null;
-  }>(
-    "SELECT image_data, mime_type, source_url FROM teller_generated_images WHERE id = $1",
-    [id],
-  );
-  const row = result.rows[0];
-  if (!row) return null;
-  return {
-    imageData: row.image_data,
-    mimeType: row.mime_type,
-    sourceUrl: row.source_url,
-  };
 }
 
 function currentUsageMonth() {
@@ -128,6 +87,47 @@ export async function saveUserChatHistory(userId: string, history: unknown[]) {
     `,
     [userId, currentUsageMonth(), JSON.stringify(history)],
   );
+}
+
+export async function saveUserChatMedia(
+  userId: string,
+  historyId: string,
+  fileName: string,
+  contentType: string,
+  mediaData: Buffer,
+) {
+  await ensureSchema();
+  const mediaId = crypto.randomUUID();
+  await getPool().query(
+    `
+      INSERT INTO teller_chat_media (id, user_id, history_id, file_name, content_type, file_size, media_data)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `,
+    [mediaId, userId, historyId, fileName, contentType, mediaData.length, mediaData],
+  );
+  return mediaId;
+}
+
+export async function getUserChatMedia(userId: string, mediaId: string) {
+  await ensureSchema();
+  const result = await getPool().query<{
+    file_name: string;
+    content_type: string;
+    file_size: number;
+    media_data: Buffer;
+  }>(
+    "SELECT file_name, content_type, file_size, media_data FROM teller_chat_media WHERE user_id = $1 AND id = $2",
+    [userId, mediaId],
+  );
+  const row = result.rows[0];
+  return row
+    ? {
+        fileName: row.file_name,
+        contentType: row.content_type,
+        fileSize: row.file_size,
+        mediaData: row.media_data,
+      }
+    : null;
 }
 
 export async function saveUserUsage(userId: string, usageCount: number, usageMonth = currentUsageMonth()) {
