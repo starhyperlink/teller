@@ -130,6 +130,50 @@ export async function getUserChatMedia(userId: string, mediaId: string) {
     : null;
 }
 
+export async function getUserGeneratedImages(userId: string, limit: number, offset: number) {
+  await ensureSchema();
+  const result = await getPool().query<{
+    id: string;
+    history_id: string;
+    created_at: Date;
+  }>(
+    `
+      SELECT id, history_id, created_at
+      FROM teller_chat_media
+      WHERE user_id = $1 AND file_name = 'generated-image' AND content_type LIKE 'image/%'
+      ORDER BY created_at DESC, id DESC
+      LIMIT $2 OFFSET $3
+    `,
+    [userId, limit, offset],
+  );
+
+  return result.rows.map((row) => ({
+    id: row.id,
+    historyId: row.history_id,
+    createdAt: row.created_at.toISOString(),
+  }));
+}
+
+export async function getUserGeneratedImage(userId: string, mediaId: string) {
+  await ensureSchema();
+  const result = await getPool().query<{
+    content_type: string;
+    media_data: Buffer;
+  }>(
+    `
+      SELECT content_type, media_data
+      FROM teller_chat_media
+      WHERE user_id = $1 AND id = $2 AND file_name = 'generated-image'
+        AND content_type LIKE 'image/%'
+    `,
+    [userId, mediaId],
+  );
+  const row = result.rows[0];
+  return row
+    ? { contentType: row.content_type, mediaData: row.media_data }
+    : null;
+}
+
 export async function saveUserUsage(userId: string, usageCount: number, usageMonth = currentUsageMonth()) {
   await ensureSchema();
   await getPool().query(

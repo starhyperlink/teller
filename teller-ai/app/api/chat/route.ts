@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { callTellerAI } from "@/lib/ai";
+import { analyzeImageWithOpenRouter } from "@/lib/openrouter-image";
 import { getAuth0User, getAuthenticatedUserId } from "@/lib/auth0-management";
 import { incrementUserUsage } from "@/lib/postgres";
 import { LOCAL_TEST_USER_ID } from "@/lib/local-test-auth";
 import { COUNTRY_OPTIONS } from "@/lib/country-options";
+import { MAX_IMAGE_BYTES, parseImageDataUrl } from "@/lib/image-input";
 
 export const runtime = "nodejs";
 
@@ -20,6 +22,36 @@ export async function POST(req: Request) {
       );
     }
 
+    const latestMessage = messages[messages.length - 1];
+    const hasImage = typeof latestMessage?.imageUrl === "string";
+    const encodedImage = hasImage
+      ? latestMessage.imageUrl.match(/^data:image\/[^;,]+;base64,([\s\S]*)$/i)
+      : null;
+    if (encodedImage && encodedImage[1].length > (MAX_IMAGE_BYTES * 4) / 3) {
+      return NextResponse.json(
+        { error: "Keep uploaded images under 3 MB." },
+        { status: 413 },
+      );
+    }
+    if (hasImage && !parseImageDataUrl(latestMessage.imageUrl)) {
+      return NextResponse.json(
+        { error: "Upload a valid JPEG, PNG, or WebP image under 3 MB." },
+        { status: 400 },
+      );
+    }
+    if (hasImage && typeof latestMessage.content !== "string") {
+      return NextResponse.json({ error: "Add a question about the uploaded image." }, { status: 400 });
+    }
+    if (
+      hasImage &&
+      (!process.env.OPENROUTER_API_KEY || !process.env.IMAGE_GENERATION_MODEL?.trim())
+    ) {
+      return NextResponse.json(
+        { error: "Image analysis is not configured on the server." },
+        { status: 503 },
+      );
+    }
+
     let country: string | undefined;
     if (userId && userId !== LOCAL_TEST_USER_ID) {
       try {
@@ -33,7 +65,20 @@ export async function POST(req: Request) {
       }
     }
 
-    const reply = await callTellerAI(messages, { country });
+    let reply: string;
+    if (hasImage) {
+      try {
+        reply = await analyzeImageWithOpenRouter(latestMessage.content, latestMessage.imageUrl, country);
+      } catch (error) {
+        console.error("OpenRouter image analysis error:", error);
+        return NextResponse.json(
+          { error: "Image analysis failed. Please try again." },
+          { status: 502 },
+        );
+      }
+    } else {
+      reply = await callTellerAI(messages, { country });
+    }
 
       // Ask the AI for a short title summarizing the conversation
       let title: string | null = null;

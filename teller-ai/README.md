@@ -18,6 +18,10 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
+## Image generation
+
+Image generation and uploaded-image understanding use the server-side `IMAGE_GENERATION_MODEL` and `OPENROUTER_API_KEY` environment variables. Set `IMAGE_GENERATION_MODEL=google/gemini-3.1-flash-image-preview` to select Nano Banana 2. Generated images default to 1K resolution. JPEG, PNG, and WebP uploads up to 3 MB are analyzed when the prompt asks a question and used as references when the prompt asks for an edit.
+
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
 ## Learn More

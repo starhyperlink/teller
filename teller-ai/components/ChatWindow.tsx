@@ -2,7 +2,7 @@
 
 import { useAppAuth } from "@/components/Auth0Provider";
 import PayPalUpgradeButton from "@/components/PayPalUpgradeButton";
-import { ArrowUp, LoaderCircle, Mic, Paperclip, X } from "lucide-react";
+import { ArrowUp, Images, LoaderCircle, Mic, Paperclip, X } from "lucide-react";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -26,6 +26,13 @@ type HistoryItem = {
   title: string;
   messages: Message[];
   updatedAt: number;
+};
+
+type GeneratedImage = {
+  id: string;
+  historyId: string;
+  createdAt: string;
+  imageUrl: string;
 };
 
 type Theme = "auto" | "dark" | "light";
@@ -58,6 +65,12 @@ function getErrorMessage(error: unknown) {
 function isImageGenerationPrompt(prompt: string) {
   return /\b(?:pic|picture|image|photo|artwork|illustration)\b/i.test(prompt) &&
     /\b(?:make|create|generate|draw|design|show|of|for|with|turn)\b/i.test(prompt);
+}
+
+function isImageModificationPrompt(prompt: string) {
+  return /^\s*(?:(?:please|can you|could you|would you)\s+)*(?:edit|modify|change|alter|transform|turn|convert|restyle|redesign|enhance|retouch|recolor|colorize|crop|add|remove|replace|erase|blur)\b/i.test(prompt) ||
+    /^\s*(?:(?:please|can you|could you|would you)\s+)*(?:make|create|generate|draw|design)\s+(?:it|this|the image|the photo|the picture|an? (?:new )?(?:image|photo|picture))\b/i.test(prompt) ||
+    /\b(?:make|create|generate)\s+(?:it|this|the image|the photo|the picture|an? (?:new )?(?:image|photo|picture))\b/i.test(prompt);
 }
 
 function normalizeMathExpression(expression: string) {
@@ -248,6 +261,13 @@ export default function ChatWindow() {
   const speechTranscriptRef = useRef("");
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isHistoryVisible, setIsHistoryVisible] = useState(true);
+  const [isImageHistoryOpen, setIsImageHistoryOpen] = useState(false);
+  const [generatedImages, setGeneratedImages] = useState<GeneratedImage[]>([]);
+  const [isGeneratedImagesLoading, setIsGeneratedImagesLoading] = useState(false);
+  const [generatedImagesHasMore, setGeneratedImagesHasMore] = useState(false);
+  const [generatedImagesError, setGeneratedImagesError] = useState("");
+  const generatedImageUrlsRef = useRef(new Set<string>());
+  const generatedImageOffsetRef = useRef(0);
   const [pendingFile, setPendingFile] = useState<Message["file"] | null>(null);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [theme, setTheme] = useState<Theme>("auto");
@@ -271,6 +291,11 @@ export default function ChatWindow() {
 
   useEffect(() => {
     setIsMounted(true);
+  }, []);
+
+  useEffect(() => () => {
+    generatedImageUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+    generatedImageUrlsRef.current.clear();
   }, []);
 
   useEffect(() => {
@@ -496,6 +521,69 @@ export default function ChatWindow() {
     setActiveHistoryId(id);
     setMessages(h.messages);
     setIsSidebarOpen(false);
+    setIsImageHistoryOpen(false);
+  }
+
+  async function loadGeneratedImages(reset = false) {
+    if (!hasSession || isGeneratedImagesLoading) return;
+    setIsGeneratedImagesLoading(true);
+    setGeneratedImagesError("");
+
+    if (reset) {
+      generatedImageUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+      generatedImageUrlsRef.current.clear();
+      generatedImageOffsetRef.current = 0;
+      setGeneratedImages([]);
+      setGeneratedImagesHasMore(false);
+    }
+
+    try {
+      const token = await getAccessTokenSilently();
+      const offset = reset ? 0 : generatedImageOffsetRef.current;
+      const response = await fetch(`/api/account/images?offset=${offset}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Could not load generated images.");
+      if (!Array.isArray(data.images)) throw new Error("The image history response was invalid.");
+      generatedImageOffsetRef.current = offset + data.images.length;
+
+      const results = await Promise.allSettled(
+        data.images.map(async (image: { id: string; historyId: string; createdAt: string }) => {
+          const imageResponse = await fetch(`/api/account/images/${encodeURIComponent(image.id)}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!imageResponse.ok) {
+            throw new Error(`Could not load image ${image.id}.`);
+          }
+          const imageUrl = URL.createObjectURL(await imageResponse.blob());
+          generatedImageUrlsRef.current.add(imageUrl);
+          return { ...image, imageUrl } satisfies GeneratedImage;
+        }),
+      );
+      const loadedImages = results.flatMap((result) => (
+        result.status === "fulfilled" ? [result.value] : []
+      ));
+      setGeneratedImages((previous) => reset ? loadedImages : [...previous, ...loadedImages]);
+      setGeneratedImagesHasMore(data.hasMore === true);
+      if (loadedImages.length < data.images.length) {
+        setGeneratedImagesError("Some images could not be loaded. Try again later.");
+      }
+    } catch (error) {
+      setGeneratedImagesError(getErrorMessage(error));
+    } finally {
+      setIsGeneratedImagesLoading(false);
+    }
+  }
+
+  function openGeneratedImageHistory() {
+    setIsImageHistoryOpen(true);
+    setIsSidebarOpen(false);
+    if (!hasSession) {
+      setGeneratedImagesError("Log in to view your generated images.");
+      return;
+    }
+    if (!generatedImages.length) void loadGeneratedImages(true);
   }
 
   async function sendMessage(messageText = input) {
@@ -516,7 +604,12 @@ export default function ChatWindow() {
     setLoading(true);
 
     try {
-      if (!pendingFile && isImageGenerationPrompt(userMessage.content)) {
+      const hasImageUpload = Boolean(pendingFile?.type.startsWith("image/"));
+      const shouldGenerateImage = hasImageUpload
+        ? isImageModificationPrompt(userMessage.content)
+        : !pendingFile && isImageGenerationPrompt(userMessage.content);
+
+      if (shouldGenerateImage) {
         const token = isAuthenticated ? await getAccessTokenSilently() : null;
         const imageResponse = await fetch("/api/images/generate", {
           method: "POST",
@@ -524,7 +617,11 @@ export default function ChatWindow() {
             "Content-Type": "application/json",
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
-          body: JSON.stringify({ prompt: userMessage.content, historyId: activeHistoryId }),
+          body: JSON.stringify({
+            prompt: userMessage.content,
+            historyId: activeHistoryId,
+            ...(hasImageUpload ? { referenceImage: pendingFile?.dataUrl } : {}),
+          }),
         });
         const imageData = await imageResponse.json();
         if (!imageResponse.ok) {
@@ -557,10 +654,12 @@ export default function ChatWindow() {
         },
         body: JSON.stringify({
           messages: updatedMessages.map((msg) => {
+            const isCurrentImage = msg === userMessage && msg.file?.type.startsWith("image/");
             if (msg.file) {
               return {
                 role: msg.role,
                 content: `${msg.content || ""}\n[Attachment: ${msg.file.name} (${msg.file.type}; ${msg.file.size} bytes)]`,
+                ...(isCurrentImage ? { imageUrl: msg.file.dataUrl } : {}),
               };
             }
             return { role: msg.role, content: msg.content };
@@ -839,6 +938,17 @@ export default function ChatWindow() {
             <button className="mb-2 w-full rounded-lg bg-white px-4 py-2 font-medium text-black" onClick={createNewChat}>
               New Chat
             </button>
+            <button
+              type="button"
+              onClick={openGeneratedImageHistory}
+              aria-current={isImageHistoryOpen ? "page" : undefined}
+              className={`flex w-full items-center gap-2 rounded-lg px-4 py-2 text-left font-medium transition hover:bg-neutral-800 ${
+                isImageHistoryOpen ? "bg-neutral-800 text-white" : "text-neutral-300"
+              }`}
+            >
+              <Images size={18} aria-hidden="true" />
+              History
+            </button>
 
             {/* file attach control moved to the input area (left of prompt) */}
 
@@ -965,6 +1075,82 @@ export default function ChatWindow() {
           </div>
         </header>
 
+        {isImageHistoryOpen ? (
+          <section aria-labelledby="generated-image-history-heading" className="min-h-0 flex-1 overflow-y-auto p-4 modern-scroll">
+            <div className="mx-auto max-w-6xl">
+              <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h1 id="generated-image-history-heading" className="text-2xl font-semibold text-white">Generated image history</h1>
+                  <p className="mt-1 text-sm text-neutral-400">Images you have generated with Teller AI.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsImageHistoryOpen(false)}
+                  className="rounded-lg border border-neutral-700 px-4 py-2 text-sm text-neutral-200 hover:bg-neutral-800"
+                >
+                  Back to chat
+                </button>
+              </div>
+
+              {generatedImagesError && (
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-rose-900/70 bg-rose-950/40 px-4 py-3 text-sm text-rose-200" role="alert">
+                  <span>{generatedImagesError}</span>
+                  {!hasSession && (
+                    <button type="button" onClick={() => loginWithRedirect()} className="rounded-md bg-white px-3 py-1.5 font-medium text-neutral-950">
+                      Log in
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {isGeneratedImagesLoading && generatedImages.length === 0 ? (
+                <div className="flex items-center justify-center gap-2 py-16 text-neutral-400" role="status">
+                  <LoaderCircle size={20} className="animate-spin" aria-hidden="true" />
+                  Loading your images...
+                </div>
+              ) : generatedImages.length === 0 && !generatedImagesError ? (
+                <p className="rounded-xl border border-dashed border-neutral-700 px-4 py-16 text-center text-neutral-400">
+                  No generated images yet. Images you create in chat will appear here.
+                </p>
+              ) : (
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                  {generatedImages.map((image) => (
+                    <article key={image.id} className="overflow-hidden rounded-xl border border-neutral-800 bg-neutral-900">
+                      <a href={image.imageUrl} target="_blank" rel="noreferrer" aria-label={`Open generated image from ${new Date(image.createdAt).toLocaleDateString()}`}>
+                        <img
+                          src={image.imageUrl}
+                          alt="Generated image"
+                          loading="lazy"
+                          className="aspect-square w-full bg-neutral-950 object-contain"
+                        />
+                      </a>
+                      <div className="flex items-center justify-between gap-2 px-3 py-2 text-xs text-neutral-400">
+                        <time dateTime={image.createdAt}>{new Date(image.createdAt).toLocaleString()}</time>
+                        <a href={image.imageUrl} download={`teller-generated-${image.id}.png`} className="shrink-0 rounded px-2 py-1 text-neutral-200 hover:bg-neutral-800">
+                          Download
+                        </a>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+
+              {generatedImagesHasMore && (
+                <div className="mt-6 text-center">
+                  <button
+                    type="button"
+                    onClick={() => void loadGeneratedImages()}
+                    disabled={isGeneratedImagesLoading}
+                    className="rounded-lg border border-neutral-700 px-5 py-2.5 text-sm text-neutral-200 transition hover:bg-neutral-800 disabled:opacity-50"
+                  >
+                    {isGeneratedImagesLoading ? "Loading..." : "Load more"}
+                  </button>
+                </div>
+              )}
+            </div>
+          </section>
+        ) : (
+          <>
         <div className="min-h-0 flex-1 overflow-y-auto p-4 modern-scroll">
           <div className="mx-auto min-w-0 max-w-3xl space-y-4">
             {messages.map((message, index) => (
@@ -1035,12 +1221,27 @@ export default function ChatWindow() {
                   <input type="file" className="hidden" onChange={async (e) => {
                     const f = e.target.files?.[0];
                     if (!f) return;
+                    if (f.type.startsWith("image/")) {
+                      if (!["image/jpeg", "image/png", "image/webp"].includes(f.type)) {
+                        setSpeechError("Upload a JPEG, PNG, or WebP image.");
+                        e.target.value = "";
+                        return;
+                      }
+                      if (f.size > 3 * 1024 * 1024) {
+                        setSpeechError("Keep uploaded images under 3 MB.");
+                        e.target.value = "";
+                        return;
+                      }
+                    }
                     const reader = new FileReader();
                     reader.onload = () => {
                       const dataUrl = reader.result as string;
                       setPendingFile({ name: f.name, type: f.type, size: f.size, dataUrl });
+                      setSpeechError("");
                     };
+                    reader.onerror = () => setSpeechError("The selected file could not be read.");
                     reader.readAsDataURL(f);
+                    e.target.value = "";
                   }} />
                   <Paperclip size={20} aria-hidden="true" />
                 </label>
@@ -1104,6 +1305,8 @@ export default function ChatWindow() {
             )}
           </div>
         </div>
+          </>
+        )}
       </main>
     </div>
   );

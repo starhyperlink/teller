@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { generateImageWithMcp } from "@/lib/hf-image-mcp";
+import { generateImageWithOpenRouter } from "@/lib/openrouter-image";
+import { MAX_IMAGE_BYTES, parseImageDataUrl } from "@/lib/image-input";
 import { getAuthenticatedUserId } from "@/lib/auth0-management";
 import { saveUserChatMedia } from "@/lib/postgres";
 
@@ -27,6 +28,7 @@ export async function POST(request: Request) {
     const body = await request.json();
     const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
     const resolution = typeof body.resolution === "string" ? body.resolution : "";
+    const referenceImage = body.referenceImage;
 
     if (!prompt || prompt.length > 1500) {
       return NextResponse.json(
@@ -37,8 +39,31 @@ export async function POST(request: Request) {
     if (resolution && !resolutions.has(resolution)) {
       return NextResponse.json({ error: "Choose a supported image size." }, { status: 400 });
     }
+    if (referenceImage !== undefined && typeof referenceImage !== "string") {
+      return NextResponse.json({ error: "The reference image is invalid." }, { status: 400 });
+    }
+    const parsedReference = referenceImage ? parseImageDataUrl(referenceImage) : null;
+    if (referenceImage && !parsedReference) {
+      const encodedImage = referenceImage.match(/^data:image\/[^;,]+;base64,([\s\S]*)$/i);
+      if (encodedImage && encodedImage[1].length > (MAX_IMAGE_BYTES * 4) / 3) {
+        return NextResponse.json(
+          { error: "Keep reference images under 3 MB." },
+          { status: 413 },
+        );
+      }
+      return NextResponse.json(
+        { error: "Upload a JPEG, PNG, or WebP image under 3 MB." },
+        { status: 400 },
+      );
+    }
+    if (!process.env.OPENROUTER_API_KEY || !process.env.IMAGE_GENERATION_MODEL?.trim()) {
+      return NextResponse.json(
+        { error: "Image generation is not configured on the server." },
+        { status: 503 },
+      );
+    }
 
-    const image = await generateImageWithMcp(prompt, resolution);
+    const image = await generateImageWithOpenRouter(prompt, resolution, parsedReference?.dataUrl);
     const dataUrl = image.imageUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,([\s\S]+)$/);
     if (!dataUrl) {
       return NextResponse.json(
