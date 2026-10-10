@@ -580,10 +580,15 @@ export default function ChatWindow() {
     setIsImageHistoryOpen(true);
     setIsSidebarOpen(false);
     if (!hasSession) {
+      generatedImageUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+      generatedImageUrlsRef.current.clear();
+      generatedImageOffsetRef.current = 0;
+      setGeneratedImages([]);
+      setGeneratedImagesHasMore(false);
       setGeneratedImagesError("Log in to view your generated images.");
       return;
     }
-    if (!generatedImages.length) void loadGeneratedImages(true);
+    void loadGeneratedImages(true);
   }
 
   async function sendMessage(messageText = input) {
