@@ -6,6 +6,7 @@ import { incrementUserUsage } from "@/lib/postgres";
 import { LOCAL_TEST_USER_ID } from "@/lib/local-test-auth";
 import { COUNTRY_OPTIONS } from "@/lib/country-options";
 import { MAX_IMAGE_BYTES, parseImageDataUrl } from "@/lib/image-input";
+import { isAgentId } from "@/lib/agents";
 
 export const runtime = "nodejs";
 
@@ -14,6 +15,11 @@ export async function POST(req: Request) {
     const userId = await getAuthenticatedUserId(req);
     const body = await req.json();
     const { messages } = body;
+    const agent = body.agent === undefined ? "teller" : body.agent;
+
+    if (!isAgentId(agent)) {
+      return NextResponse.json({ error: "Choose a valid chat agent." }, { status: 400 });
+    }
 
     if (!messages || !Array.isArray(messages)) {
       return NextResponse.json(
@@ -68,7 +74,7 @@ export async function POST(req: Request) {
     let reply: string;
     if (hasImage) {
       try {
-        reply = await analyzeImageWithOpenRouter(latestMessage.content, latestMessage.imageUrl, country);
+        reply = await analyzeImageWithOpenRouter(latestMessage.content, latestMessage.imageUrl, { country, agent });
       } catch (error) {
         console.error("OpenRouter image analysis error:", error);
         return NextResponse.json(
@@ -77,7 +83,7 @@ export async function POST(req: Request) {
         );
       }
     } else {
-      reply = await callTellerAI(messages, { country });
+      reply = await callTellerAI(messages, { country, agent });
     }
 
       // Ask the AI for a short title summarizing the conversation
@@ -87,7 +93,7 @@ export async function POST(req: Request) {
         const titleResult = await callTellerAI([
           ...messages,
           { role: "user", content: titlePrompt },
-        ], { maxTokens: 256 });
+        ], { maxTokens: 256, agent });
 
         // sanitize titleResult to a single line and reasonable length
         if (titleResult) {

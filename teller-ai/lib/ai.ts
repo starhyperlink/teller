@@ -1,3 +1,5 @@
+import { AGENTS, CODEX_MODEL, type AgentId } from "@/lib/agents";
+
 export const TELLER_AI_SYSTEM_PROMPT = `
 You are Teller AI, a powerful conversational AI assistant.
 
@@ -65,7 +67,7 @@ function prepareMessages(messages: { role: string; content: string }[]) {
 
 export async function callTellerAI(
   messages: { role: string; content: string }[],
-  options?: { maxTokens?: number; country?: string },
+  options?: { maxTokens?: number; country?: string; agent?: AgentId },
 ) {
   const preparedMessages = prepareMessages(messages);
   const response = await fetch(process.env.AI_API_BASE_URL as string, {
@@ -75,13 +77,14 @@ export async function callTellerAI(
       Authorization: `Bearer ${process.env.AI_API_KEY}`,
     },
     body: JSON.stringify({
-      model: process.env.AI_MODEL,
+      model: options?.agent === "codex" ? CODEX_MODEL : process.env.AI_MODEL,
       max_tokens: getMaxTokens(options?.maxTokens),
       messages: [
         {
           role: "system",
           content: [
             TELLER_AI_SYSTEM_PROMPT,
+            options?.agent && AGENTS[options.agent].systemPrompt,
             options?.country
               ? `The authenticated user's country is ${options.country}. When a question depends on location, use this country's laws, services, currency, spelling, units, and local context. Do not force localization when it is irrelevant, and follow a different location if the user explicitly asks about one.`
               : "",

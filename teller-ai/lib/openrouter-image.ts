@@ -1,3 +1,5 @@
+import { AGENTS, CODEX_MODEL, type AgentId } from "@/lib/agents";
+
 const DEFAULT_RESOLUTION = "1K";
 const DEFAULT_ASPECT_RATIO = "1:1";
 
@@ -126,7 +128,7 @@ export async function generateImageWithOpenRouter(
   if (!apiKey) {
     throw new Error("Image generation is not configured on the server.");
   }
-  const model = getImageGenerationModel();
+  const model = options?.agent === "codex" ? CODEX_MODEL : getImageGenerationModel();
 
   const selectedAspectRatio = resolution ? aspectRatios[resolution] : undefined;
   if (resolution && !selectedAspectRatio) {
@@ -186,7 +188,7 @@ export async function generateImageWithOpenRouter(
 export async function analyzeImageWithOpenRouter(
   prompt: string,
   imageDataUrl: string,
-  country?: string,
+  options?: { country?: string; agent?: AgentId },
 ) {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
@@ -208,8 +210,9 @@ export async function analyzeImageWithOpenRouter(
           role: "system",
           content: [
             "You are Teller AI. Answer the user's request about the attached image accurately. Describe visible details and distinguish observations from inferences.",
-            country
-              ? `The authenticated user's country is ${country}. Use this context when relevant.`
+            options?.agent && AGENTS[options.agent].systemPrompt,
+            options?.country
+              ? `The authenticated user's country is ${options.country}. Use this context when relevant.`
               : "",
           ].filter(Boolean).join("\n\n"),
         },

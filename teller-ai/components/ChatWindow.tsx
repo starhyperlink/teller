@@ -2,7 +2,10 @@
 
 import { useAppAuth } from "@/components/Auth0Provider";
 import PayPalUpgradeButton from "@/components/PayPalUpgradeButton";
-import { ArrowUp, Images, LoaderCircle, Mic, Paperclip, X } from "lucide-react";
+import AgentPicker from "@/components/AgentPicker";
+import { AGENTS, type AgentId } from "@/lib/agents";
+import { ArrowUp, Bot, Images, LoaderCircle, Mic, Paperclip, X } from "lucide-react";
+import Link from "next/link";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -26,6 +29,7 @@ type HistoryItem = {
   title: string;
   messages: Message[];
   updatedAt: number;
+  agent: AgentId;
 };
 
 type GeneratedImage = {
@@ -231,17 +235,21 @@ function FormattedMessage({ content, onCopyCode, showCodeCopy = true }: { conten
   return output;
 }
 
-export default function ChatWindow() {
+export default function ChatWindow({
+  agent = "teller",
+  showAgents = false,
+}: {
+  agent?: AgentId;
+  showAgents?: boolean;
+} = {}) {
+  const agentProfile = AGENTS[agent];
   const [messages, setMessages] = useState<Message[]>([
-    {
-      role: "assistant",
-      content:
-        "Hi, I’m Teller AI. Ask me anything — I can help with research, writing, business, coding, summaries, and ideas.",
-    },
+    { role: "assistant", content: agentProfile.greeting },
   ]);
 
   const [histories, setHistories] = useState<HistoryItem[]>([]);
   const [activeHistoryId, setActiveHistoryId] = useState<string | null>(null);
+  const agentHistories = histories.filter((history) => history.agent === agent);
   const historyHydratedRef = useRef(false);
 
   const [input, setInput] = useState("");
@@ -320,26 +328,17 @@ export default function ChatWindow() {
     historyHydratedRef.current = false;
     try {
       setActiveHistoryId(null);
-      setMessages([
-        {
-          role: "assistant",
-          content:
-            "Hi, I’m Teller AI. Ask me anything — I can help with research, writing, business, coding, summaries, and ideas.",
-        },
-      ]);
+      const initialMessages: Message[] = [
+        { role: "assistant", content: agentProfile.greeting },
+      ];
+      setMessages(initialMessages);
       if (!isAuthenticated) {
-        const initialMessages: Message[] = [
-          {
-            role: "assistant",
-            content:
-              "Hi, I’m Teller AI. Ask me anything — I can help with research, writing, business, coding, summaries, and ideas.",
-          },
-        ];
         const initial: HistoryItem = {
           id: Date.now().toString(),
           title: "New chat",
           messages: initialMessages,
           updatedAt: Date.now(),
+          agent,
         };
         setHistories([initial]);
         setActiveHistoryId(initial.id);
@@ -356,25 +355,20 @@ export default function ChatWindow() {
           const data = await response.json();
           if (!Array.isArray(data.history)) throw new Error("Invalid remote history.");
           const remoteHistories = data.history as HistoryItem[];
-          if (remoteHistories.length) {
+          const matchingHistories = remoteHistories.filter((history) => history.agent === agent);
+          if (matchingHistories.length) {
             setHistories(remoteHistories);
-            setActiveHistoryId(remoteHistories[0].id);
-            setMessages(remoteHistories[0].messages);
+            setActiveHistoryId(matchingHistories[0].id);
+            setMessages(matchingHistories[0].messages);
           } else {
-            const initialMessages: Message[] = [
-              {
-                role: "assistant",
-                content:
-                  "Hi, I’m Teller AI. Ask me anything — I can help with research, writing, business, coding, summaries, and ideas.",
-              },
-            ];
             const initial: HistoryItem = {
               id: Date.now().toString(),
               title: "New chat",
               messages: initialMessages,
               updatedAt: Date.now(),
+              agent,
             };
-            setHistories([initial]);
+            setHistories([initial, ...remoteHistories]);
             setActiveHistoryId(initial.id);
             setMessages(initialMessages);
           }
@@ -388,7 +382,7 @@ export default function ChatWindow() {
         });
       // eslint-disable-next-line no-empty
     } catch (e) {}
-  }, [getAccessTokenSilently, isAuthLoading, isAuthenticated]);
+  }, [agent, agentProfile.greeting, getAccessTokenSilently, isAuthLoading, isAuthenticated]);
 
   useEffect(() => {
     if (isAuthLoading || !isAuthenticated) return;
@@ -408,7 +402,7 @@ export default function ChatWindow() {
 
   // Persist active history whenever messages change
   useEffect(() => {
-    if (!activeHistoryId) return;
+    if (!activeHistoryId || !historyHydratedRef.current) return;
     setHistories((prev) => {
       const next = prev.slice();
       const idx = next.findIndex((h) => h.id === activeHistoryId);
@@ -421,6 +415,7 @@ export default function ChatWindow() {
         title: finalTitle,
         messages,
         updatedAt: Date.now(),
+        agent,
       };
       if (idx === -1) next.unshift(updated);
       else {
@@ -430,7 +425,7 @@ export default function ChatWindow() {
       }
       return next;
     });
-  }, [messages, activeHistoryId]);
+  }, [messages, activeHistoryId, agent]);
 
   useEffect(() => {
     if (!isAuthenticated || !historyHydratedRef.current) return;
@@ -467,17 +462,14 @@ export default function ChatWindow() {
   function createNewChat() {
     const id = Date.now().toString();
     const initialMessages: Message[] = [
-      {
-        role: "assistant",
-        content:
-          "Hi, I’m Teller AI. Ask me anything — I can help with research, writing, business, coding, summaries, and ideas.",
-      },
+      { role: "assistant", content: agentProfile.greeting },
     ];
     const newItem: HistoryItem = {
       id,
       title: "New chat",
       messages: initialMessages,
       updatedAt: Date.now(),
+      agent,
     };
     const next = [newItem, ...histories];
     setHistories(next);
@@ -497,16 +489,17 @@ export default function ChatWindow() {
       const next = prev.filter((h) => h.id !== id);
       // if deleted active, switch to first or create new
       if (id === activeHistoryId) {
-        if (next.length) {
-          setActiveHistoryId(next[0].id);
-          setMessages(next[0].messages);
+        const nextAgentHistory = next.find((history) => history.agent === agent);
+        if (nextAgentHistory) {
+          setActiveHistoryId(nextAgentHistory.id);
+          setMessages(nextAgentHistory.messages);
         } else {
           const newId = Date.now().toString();
           const initialMessages: Message[] = [
-            { role: "assistant", content: "Hi, I’m Teller AI. Ask me anything — I can help with research, writing, business, coding, summaries, and ideas.", file: null },
+            { role: "assistant", content: agentProfile.greeting, file: null },
           ];
-          const newHist: HistoryItem = { id: newId, title: "New chat", messages: initialMessages, updatedAt: Date.now() };
-          setHistories([newHist]);
+          const newHist: HistoryItem = { id: newId, title: "New chat", messages: initialMessages, updatedAt: Date.now(), agent };
+          setHistories([newHist, ...next]);
           setActiveHistoryId(newId);
           setMessages(initialMessages);
         }
@@ -605,9 +598,9 @@ export default function ChatWindow() {
 
     try {
       const hasImageUpload = Boolean(pendingFile?.type.startsWith("image/"));
-      const shouldGenerateImage = hasImageUpload
+      const shouldGenerateImage = agent === "teller" && (hasImageUpload
         ? isImageModificationPrompt(userMessage.content)
-        : !pendingFile && isImageGenerationPrompt(userMessage.content);
+        : !pendingFile && isImageGenerationPrompt(userMessage.content));
 
       if (shouldGenerateImage) {
         const token = isAuthenticated ? await getAccessTokenSilently() : null;
@@ -653,6 +646,7 @@ export default function ChatWindow() {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
+          agent,
           messages: updatedMessages.map((msg) => {
             const isCurrentImage = msg === userMessage && msg.file?.type.startsWith("image/");
             if (msg.file) {
@@ -696,7 +690,7 @@ export default function ChatWindow() {
               const item = next.splice(idx, 1)[0];
               next.unshift(item);
             } else {
-              next.unshift({ id: activeHistoryId, title: data.title, messages: [...updatedMessages, assistantMessage], updatedAt: Date.now() });
+              next.unshift({ id: activeHistoryId, title: data.title, messages: [...updatedMessages, assistantMessage], updatedAt: Date.now(), agent });
             }
             return next;
           });
@@ -920,7 +914,7 @@ export default function ChatWindow() {
     }
     setInput(message.content);
     setPendingFile(message.file || null);
-    window.setTimeout(() => document.querySelector<HTMLInputElement>("input[placeholder='Ask Teller AI anything...']")?.focus(), 0);
+    window.setTimeout(() => document.querySelector<HTMLTextAreaElement>(`textarea[aria-label='Message ${agentProfile.name}']`)?.focus(), 0);
   }
 
   return (
@@ -938,6 +932,17 @@ export default function ChatWindow() {
             <button className="mb-2 w-full rounded-lg bg-white px-4 py-2 font-medium text-black" onClick={createNewChat}>
               New Chat
             </button>
+            <Link
+              href="/agents"
+              aria-current={showAgents ? "page" : undefined}
+              className={`mb-2 flex w-full items-center gap-2 rounded-lg px-4 py-2 text-left font-medium transition hover:bg-neutral-800 ${
+                showAgents ? "bg-neutral-800 text-white" : "text-neutral-300"
+              }`}
+              onClick={() => setIsSidebarOpen(false)}
+            >
+              <Bot size={18} aria-hidden="true" />
+              Agents
+            </Link>
             <button
               type="button"
               onClick={openGeneratedImageHistory}
@@ -959,9 +964,9 @@ export default function ChatWindow() {
             <div className="min-h-0 flex-1 overflow-y-auto space-y-5 text-sm text-neutral-400 modern-scroll">
               <section aria-labelledby="chat-history-heading">
                 <h2 id="chat-history-heading" className="mb-2 px-1 text-xs font-semibold uppercase tracking-wider text-neutral-500">Chat history</h2>
-                {histories.length === 0 && <p className="px-1">No chats yet</p>}
+                {agentHistories.length === 0 && <p className="px-1">No chats yet</p>}
                 <div className="space-y-2">
-                  {histories.slice(0, 6).map((h) => (
+                  {agentHistories.slice(0, 6).map((h) => (
                     <div key={h.id} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter') loadHistory(h.id); }} onClick={() => loadHistory(h.id)} className={`flex items-center justify-between w-full rounded-md px-3 py-2 hover:bg-neutral-800 ${h.id === activeHistoryId ? "bg-neutral-800" : ""}`}>
                       <div className="min-w-0">
                         <div className="truncate text-white">{h.title}</div>
@@ -1032,7 +1037,10 @@ export default function ChatWindow() {
               <button className="hidden h-10 w-10 items-center justify-center rounded-md bg-neutral-800 transition hover:bg-neutral-700 md:inline-flex" onClick={() => setIsHistoryVisible((v) => !v)} aria-label="Toggle history visibility" title="Toggle chat history">
                 <img src="/jupiter-black.svg" alt="" aria-hidden="true" className="h-7 w-7 object-contain" />
               </button>
-              <img src="/jupiter-black.svg" alt="Teller AI" className="h-8 w-8 object-contain" />
+              <div className="flex items-center gap-2">
+                <img src="/jupiter-black.svg" alt="" aria-hidden="true" className="h-8 w-8 object-contain" />
+                <span className="font-semibold text-white">{showAgents ? "Agents" : agentProfile.name}</span>
+              </div>
             </div>
             <div className="flex items-center gap-2">
               {hasSession && planName === "Free" && (
@@ -1075,7 +1083,9 @@ export default function ChatWindow() {
           </div>
         </header>
 
-        {isImageHistoryOpen ? (
+        {showAgents ? (
+          <AgentPicker />
+        ) : isImageHistoryOpen ? (
           <section aria-labelledby="generated-image-history-heading" className="min-h-0 flex-1 overflow-y-auto p-4 modern-scroll">
             <div className="mx-auto max-w-6xl">
               <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
@@ -1190,7 +1200,7 @@ export default function ChatWindow() {
             )}
 
             {loading && (
-              <div className="mr-auto max-w-[85%] rounded-xl bg-neutral-800 p-4 [overflow-wrap:anywhere]">Teller AI is thinking...</div>
+              <div className="mr-auto max-w-[85%] rounded-xl bg-neutral-800 p-4 [overflow-wrap:anywhere]">{agentProfile.name} is thinking...</div>
             )}
 
             <div ref={messagesEndRef} />
@@ -1249,7 +1259,7 @@ export default function ChatWindow() {
                 <textarea
                   rows={1}
                   className="max-h-36 min-h-11 min-w-0 flex-1 resize-none bg-transparent px-2 py-3 text-sm leading-5 text-white outline-none placeholder:text-neutral-500"
-                  placeholder="Ask Teller AI anything..."
+                  placeholder={`Message ${agentProfile.name}...`}
                   value={input}
                   disabled={isRecording || isTranscribing || loading}
                   onChange={(e) => setInput(e.target.value)}
@@ -1259,7 +1269,7 @@ export default function ChatWindow() {
                       void sendMessage();
                     }
                   }}
-                  aria-label="Message Teller AI"
+                  aria-label={`Message ${agentProfile.name}`}
                 />
 
                 <button
