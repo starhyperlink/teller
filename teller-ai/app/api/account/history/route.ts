@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { getAuthenticatedUserId } from "@/lib/auth0-management";
-import { isAgentId } from "@/lib/agents";
 import {
   getUserChatData,
   getUserChatMedia,
@@ -25,8 +24,8 @@ function sanitizeHistory(value: unknown[]) {
     .map((item) => ({
       id: typeof item.id === "string" ? item.id.slice(0, 100) : crypto.randomUUID(),
       title: typeof item.title === "string" ? item.title.slice(0, 120) : "New chat",
+      agent: item.agent === "cyber" ? "cyber" : "teller",
       updatedAt: typeof item.updatedAt === "number" ? item.updatedAt : Date.now(),
-      agent: isAgentId(item.agent) ? item.agent : "teller",
       messages: Array.isArray(item.messages)
         ? item.messages
             .filter(

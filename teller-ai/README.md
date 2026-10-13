@@ -24,6 +24,30 @@ Image generation and uploaded-image understanding use the server-side `IMAGE_GEN
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## CyberAgent: Gmail and Calendar
+
+CyberAgent is available from the chat sidebar. It uses Google's remote Gmail MCP server for supported Gmail searches, thread reads, and draft creation, and the Google Calendar API for listing and creating primary-calendar events. It never sends email. Creating a Gmail draft or Calendar event requires an explicit confirmation in the chat.
+
+To enable the Google connection:
+
+1. In Google Cloud, enable the Gmail API, Gmail MCP API, and Google Calendar API for the project.
+2. Configure the OAuth consent screen. Add these scopes to the app's Data Access settings:
+   - `https://www.googleapis.com/auth/gmail.readonly`
+   - `https://www.googleapis.com/auth/gmail.compose`
+   - `https://www.googleapis.com/auth/calendar.events`
+3. Create a **Web application** OAuth client. Add the exact deployed callback URL (for local development, `http://localhost:3000/api/google/callback`) as an authorized redirect URI.
+4. Set these server-only environment variables from `.env.example`:
+   - `GOOGLE_OAUTH_CLIENT_ID`
+   - `GOOGLE_OAUTH_CLIENT_SECRET`
+   - `GOOGLE_OAUTH_REDIRECT_URI`
+   - `GOOGLE_TOKEN_ENCRYPTION_KEY` — a base64-encoded 32-byte key; for example, generate one with `openssl rand -base64 32`.
+   - `GMAIL_MCP_SERVER_URL` is optional and defaults to `https://gmailmcp.googleapis.com/mcp/v1`.
+5. Ensure `DATABASE_URL` is configured. OAuth tokens are encrypted before being stored in Postgres. Do not put Google credentials in `NEXT_PUBLIC_*` variables or commit them.
+
+Google may require OAuth app verification before external users can grant sensitive Gmail and Calendar scopes. While the consent screen is in testing mode, add the intended accounts as test users.
+
+CyberAgent treats retrieved email and calendar content as untrusted input. Users should still review draft/event details before confirming. For Google's Gmail MCP setup and security guidance, see [Configure the Gmail MCP server](https://developers.google.com/workspace/gmail/api/guides/configure-mcp-server).
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:

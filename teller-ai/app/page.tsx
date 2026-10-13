@@ -45,6 +45,7 @@ export default function HomePage() {
           >
             View Pricing
           </Link>
+
         </div>
       </section>
     </main>

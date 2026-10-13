@@ -6,6 +6,16 @@ type UserChatData = {
   usageCount: number;
 };
 
+export type GoogleConnectionRecord = {
+  email: string;
+  encryptedTokens: string;
+};
+
+export type GooglePendingAction = {
+  type: "gmail.create_draft" | "calendar.create_event";
+  arguments: Record<string, unknown>;
+};
+
 const globalForPostgres = globalThis as typeof globalThis & {
   tellerPostgresPool?: Pool;
   tellerPostgresSchema?: Promise<void>;
@@ -47,9 +57,108 @@ async function ensureSchema() {
         CREATE INDEX IF NOT EXISTS teller_chat_media_user_history_idx
         ON teller_chat_media (user_id, history_id)
       `);
+      await getPool().query(`
+        CREATE TABLE IF NOT EXISTS teller_google_connections (
+          user_id TEXT PRIMARY KEY,
+          email TEXT NOT NULL,
+          encrypted_tokens TEXT NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+      await getPool().query(`
+        CREATE TABLE IF NOT EXISTS teller_google_oauth_states (
+          state_hash TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          expires_at TIMESTAMPTZ NOT NULL
+        )
+      `);
+      await getPool().query(`
+        CREATE TABLE IF NOT EXISTS teller_google_pending_actions (
+          id UUID PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          action JSONB NOT NULL,
+          expires_at TIMESTAMPTZ NOT NULL
+        )
+      `);
     });
   }
   await globalForPostgres.tellerPostgresSchema;
+}
+
+export async function saveGoogleOAuthState(stateHash: string, userId: string) {
+  await ensureSchema();
+  await getPool().query(
+    "INSERT INTO teller_google_oauth_states (state_hash, user_id, expires_at) VALUES ($1, $2, NOW() + INTERVAL '10 minutes')",
+    [stateHash, userId],
+  );
+}
+
+export async function consumeGoogleOAuthState(stateHash: string) {
+  await ensureSchema();
+  const result = await getPool().query<{ user_id: string }>(
+    "DELETE FROM teller_google_oauth_states WHERE state_hash = $1 AND expires_at > NOW() RETURNING user_id",
+    [stateHash],
+  );
+  return result.rows[0]?.user_id ?? null;
+}
+
+export async function saveGoogleConnection(
+  userId: string,
+  email: string,
+  encryptedTokens: string,
+) {
+  await ensureSchema();
+  await getPool().query(
+    `
+      INSERT INTO teller_google_connections (user_id, email, encrypted_tokens, updated_at)
+      VALUES ($1, $2, $3, NOW())
+      ON CONFLICT (user_id) DO UPDATE SET
+        email = EXCLUDED.email,
+        encrypted_tokens = EXCLUDED.encrypted_tokens,
+        updated_at = NOW()
+    `,
+    [userId, email, encryptedTokens],
+  );
+}
+
+export async function getGoogleConnection(userId: string): Promise<GoogleConnectionRecord | null> {
+  await ensureSchema();
+  const result = await getPool().query<{
+    email: string;
+    encrypted_tokens: string;
+  }>(
+    "SELECT email, encrypted_tokens FROM teller_google_connections WHERE user_id = $1",
+    [userId],
+  );
+  const row = result.rows[0];
+  return row ? { email: row.email, encryptedTokens: row.encrypted_tokens } : null;
+}
+
+export async function deleteGoogleConnection(userId: string) {
+  await ensureSchema();
+  await getPool().query("DELETE FROM teller_google_connections WHERE user_id = $1", [userId]);
+}
+
+export async function createGooglePendingAction(
+  userId: string,
+  action: GooglePendingAction,
+) {
+  await ensureSchema();
+  const id = crypto.randomUUID();
+  await getPool().query(
+    "INSERT INTO teller_google_pending_actions (id, user_id, action, expires_at) VALUES ($1, $2, $3::jsonb, NOW() + INTERVAL '10 minutes')",
+    [id, userId, JSON.stringify(action)],
+  );
+  return id;
+}
+
+export async function consumeGooglePendingAction(userId: string, id: string) {
+  await ensureSchema();
+  const result = await getPool().query<{ action: GooglePendingAction }>(
+    "DELETE FROM teller_google_pending_actions WHERE id = $1 AND user_id = $2 AND expires_at > NOW() RETURNING action",
+    [id, userId],
+  );
+  return result.rows[0]?.action ?? null;
 }
 
 function currentUsageMonth() {

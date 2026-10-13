@@ -2,10 +2,18 @@
 
 import { useAppAuth } from "@/components/Auth0Provider";
 import PayPalUpgradeButton from "@/components/PayPalUpgradeButton";
-import AgentPicker from "@/components/AgentPicker";
-import { AGENTS, type AgentId } from "@/lib/agents";
-import { ArrowUp, Bot, Images, LoaderCircle, Mic, Paperclip, X } from "lucide-react";
-import Link from "next/link";
+import {
+  ArrowUp,
+  CalendarDays,
+  Check,
+  Images,
+  LoaderCircle,
+  Mail,
+  Mic,
+  Paperclip,
+  Sparkles,
+  X,
+} from "lucide-react";
 import katex from "katex";
 import "katex/dist/katex.min.css";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -13,6 +21,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 type Message = {
   role: "user" | "assistant";
   content: string;
+  pendingAction?: CyberPendingAction;
   imageUrl?: string;
   imageStoragePath?: string;
   file?: {
@@ -24,12 +33,25 @@ type Message = {
   } | null;
 };
 
+type AgentMode = "teller" | "cyber";
+type CyberPendingAction = {
+  id: string;
+  type: "gmail.create_draft" | "calendar.create_event";
+  arguments: Record<string, unknown>;
+};
+
 type HistoryItem = {
   id: string;
   title: string;
+  agent?: AgentMode;
   messages: Message[];
   updatedAt: number;
-  agent: AgentId;
+};
+
+type GoogleConnectionStatus = {
+  configured: boolean;
+  connected: boolean;
+  email: string | null;
 };
 
 type GeneratedImage = {
@@ -235,22 +257,20 @@ function FormattedMessage({ content, onCopyCode, showCodeCopy = true }: { conten
   return output;
 }
 
-export default function ChatWindow({
-  agent = "teller",
-  showAgents = false,
-}: {
-  agent?: AgentId;
-  showAgents?: boolean;
-} = {}) {
-  const agentProfile = AGENTS[agent];
+export default function ChatWindow() {
   const [messages, setMessages] = useState<Message[]>([
-    { role: "assistant", content: agentProfile.greeting },
+    {
+      role: "assistant",
+      content:
+        "Hi, I’m Teller AI. Ask me anything — I can help with research, writing, business, coding, summaries, and ideas.",
+    },
   ]);
 
   const [histories, setHistories] = useState<HistoryItem[]>([]);
   const [activeHistoryId, setActiveHistoryId] = useState<string | null>(null);
-  const agentHistories = histories.filter((history) => history.agent === agent);
+  const [activeAgent, setActiveAgent] = useState<AgentMode>("teller");
   const historyHydratedRef = useRef(false);
+  const agentQueryHandledRef = useRef(false);
 
   const [input, setInput] = useState("");
   const [speechPreview, setSpeechPreview] = useState("");
@@ -288,6 +308,11 @@ export default function ChatWindow({
   const [monthlyChatCount, setMonthlyChatCount] = useState(0);
   const [planName, setPlanName] = useState("Free");
   const [usageLimit, setUsageLimit] = useState(100);
+  const [googleConnection, setGoogleConnection] = useState<GoogleConnectionStatus | null>(null);
+  const [googleConnectionError, setGoogleConnectionError] = useState("");
+  const [googleConnectionNotice, setGoogleConnectionNotice] = useState("");
+  const [googleConnectionBusy, setGoogleConnectionBusy] = useState(false);
+  const [confirmingCyberAction, setConfirmingCyberAction] = useState<string | null>(null);
   const accountProfile = {
     name: user?.name || "Teller User",
     email: user?.email || "user@example.com",
@@ -300,6 +325,40 @@ export default function ChatWindow({
   useEffect(() => {
     setIsMounted(true);
   }, []);
+
+  useEffect(() => {
+    if (activeAgent !== "cyber" || isAuthLoading) return;
+    if (!hasSession) return;
+    let cancelled = false;
+    getAccessTokenSilently()
+      .then((token) => fetch("/api/google/connect", { headers: { Authorization: `Bearer ${token}` } }))
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Could not check the Google connection.");
+        if (!cancelled) {
+          setGoogleConnection(data as GoogleConnectionStatus);
+          const params = new URLSearchParams(window.location.search);
+          const googleResult = params.get("google");
+          if (googleResult === "connected") setGoogleConnectionNotice("Google account connected.");
+          if (googleResult === "error") setGoogleConnectionError("Google account connection did not complete. Try again.");
+          if (googleResult) {
+            params.delete("google");
+            params.delete("reason");
+            const query = params.toString();
+            window.history.replaceState({}, document.title, `${window.location.pathname}${query ? `?${query}` : ""}`);
+          }
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setGoogleConnectionError(getErrorMessage(error));
+          setGoogleConnection(null);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeAgent, getAccessTokenSilently, hasSession, isAuthLoading]);
 
   useEffect(() => () => {
     generatedImageUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
@@ -328,21 +387,32 @@ export default function ChatWindow({
     historyHydratedRef.current = false;
     try {
       setActiveHistoryId(null);
-      const initialMessages: Message[] = [
-        { role: "assistant", content: agentProfile.greeting },
-      ];
-      setMessages(initialMessages);
+      setActiveAgent("teller");
+      setMessages([
+        {
+          role: "assistant",
+          content:
+            "Hi, I’m Teller AI. Ask me anything — I can help with research, writing, business, coding, summaries, and ideas.",
+        },
+      ]);
       if (!isAuthenticated) {
+        const initialMessages: Message[] = [
+          {
+            role: "assistant",
+            content:
+              "Hi, I’m Teller AI. Ask me anything — I can help with research, writing, business, coding, summaries, and ideas.",
+          },
+        ];
         const initial: HistoryItem = {
           id: Date.now().toString(),
           title: "New chat",
           messages: initialMessages,
           updatedAt: Date.now(),
-          agent,
         };
         setHistories([initial]);
         setActiveHistoryId(initial.id);
         setMessages(initialMessages);
+        setActiveAgent("teller");
         setMonthlyChatCount(0);
         historyHydratedRef.current = true;
         return;
@@ -355,22 +425,29 @@ export default function ChatWindow({
           const data = await response.json();
           if (!Array.isArray(data.history)) throw new Error("Invalid remote history.");
           const remoteHistories = data.history as HistoryItem[];
-          const matchingHistories = remoteHistories.filter((history) => history.agent === agent);
-          if (matchingHistories.length) {
+          if (remoteHistories.length) {
             setHistories(remoteHistories);
-            setActiveHistoryId(matchingHistories[0].id);
-            setMessages(matchingHistories[0].messages);
+            setActiveHistoryId(remoteHistories[0].id);
+            setMessages(remoteHistories[0].messages);
+            setActiveAgent(remoteHistories[0].agent === "cyber" ? "cyber" : "teller");
           } else {
+            const initialMessages: Message[] = [
+              {
+                role: "assistant",
+                content:
+                  "Hi, I’m Teller AI. Ask me anything — I can help with research, writing, business, coding, summaries, and ideas.",
+              },
+            ];
             const initial: HistoryItem = {
               id: Date.now().toString(),
               title: "New chat",
               messages: initialMessages,
               updatedAt: Date.now(),
-              agent,
             };
-            setHistories([initial, ...remoteHistories]);
+            setHistories([initial]);
             setActiveHistoryId(initial.id);
             setMessages(initialMessages);
+            setActiveAgent("teller");
           }
         })
         .catch(() => {
@@ -382,7 +459,7 @@ export default function ChatWindow({
         });
       // eslint-disable-next-line no-empty
     } catch (e) {}
-  }, [agent, agentProfile.greeting, getAccessTokenSilently, isAuthLoading, isAuthenticated]);
+  }, [getAccessTokenSilently, isAuthLoading, isAuthenticated]);
 
   useEffect(() => {
     if (isAuthLoading || !isAuthenticated) return;
@@ -400,9 +477,22 @@ export default function ChatWindow({
       .catch(() => undefined);
   }, [getAccessTokenSilently, isAuthLoading, isAuthenticated]);
 
+  useEffect(() => {
+    if (!isMounted || isAuthLoading || !historyHydratedRef.current || agentQueryHandledRef.current) return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("agent") !== "cyber") {
+      agentQueryHandledRef.current = true;
+      return;
+    }
+    agentQueryHandledRef.current = true;
+    url.searchParams.delete("agent");
+    window.history.replaceState({}, document.title, `${url.pathname}${url.search}`);
+    createNewChat("cyber");
+  }, [histories, isAuthLoading, isMounted]);
+
   // Persist active history whenever messages change
   useEffect(() => {
-    if (!activeHistoryId || !historyHydratedRef.current) return;
+    if (!activeHistoryId) return;
     setHistories((prev) => {
       const next = prev.slice();
       const idx = next.findIndex((h) => h.id === activeHistoryId);
@@ -413,9 +503,9 @@ export default function ChatWindow({
       const updated: HistoryItem = {
         id: activeHistoryId,
         title: finalTitle,
+        agent: activeAgent,
         messages,
         updatedAt: Date.now(),
-        agent,
       };
       if (idx === -1) next.unshift(updated);
       else {
@@ -425,7 +515,7 @@ export default function ChatWindow({
       }
       return next;
     });
-  }, [messages, activeHistoryId, agent]);
+  }, [messages, activeAgent, activeHistoryId]);
 
   useEffect(() => {
     if (!isAuthenticated || !historyHydratedRef.current) return;
@@ -459,21 +549,27 @@ export default function ChatWindow({
     };
   }, [getAccessTokenSilently, histories, isAuthenticated]);
 
-  function createNewChat() {
+  function createNewChat(agent: AgentMode = activeAgent) {
     const id = Date.now().toString();
     const initialMessages: Message[] = [
-      { role: "assistant", content: agentProfile.greeting },
+      {
+        role: "assistant",
+        content: agent === "cyber"
+          ? "Hi, I’m CyberAgent. Connect your Google account to search and summarize Gmail, review your calendar, create email drafts, and propose calendar events. I’ll ask before creating drafts or events."
+          : "Hi, I’m Teller AI. Ask me anything — I can help with research, writing, business, coding, summaries, and ideas.",
+      },
     ];
     const newItem: HistoryItem = {
       id,
       title: "New chat",
+      agent,
       messages: initialMessages,
       updatedAt: Date.now(),
-      agent,
     };
     const next = [newItem, ...histories];
     setHistories(next);
     setActiveHistoryId(id);
+    setActiveAgent(agent);
     setMessages(initialMessages);
     setIsSidebarOpen(false);
   }
@@ -489,18 +585,19 @@ export default function ChatWindow({
       const next = prev.filter((h) => h.id !== id);
       // if deleted active, switch to first or create new
       if (id === activeHistoryId) {
-        const nextAgentHistory = next.find((history) => history.agent === agent);
-        if (nextAgentHistory) {
-          setActiveHistoryId(nextAgentHistory.id);
-          setMessages(nextAgentHistory.messages);
+        if (next.length) {
+          setActiveHistoryId(next[0].id);
+          setMessages(next[0].messages);
+          setActiveAgent(next[0].agent === "cyber" ? "cyber" : "teller");
         } else {
           const newId = Date.now().toString();
           const initialMessages: Message[] = [
-            { role: "assistant", content: agentProfile.greeting, file: null },
+            { role: "assistant", content: "Hi, I’m Teller AI. Ask me anything — I can help with research, writing, business, coding, summaries, and ideas.", file: null },
           ];
-          const newHist: HistoryItem = { id: newId, title: "New chat", messages: initialMessages, updatedAt: Date.now(), agent };
-          setHistories([newHist, ...next]);
+          const newHist: HistoryItem = { id: newId, title: "New chat", agent: "teller", messages: initialMessages, updatedAt: Date.now() };
+          setHistories([newHist]);
           setActiveHistoryId(newId);
+          setActiveAgent("teller");
           setMessages(initialMessages);
         }
       }
@@ -512,6 +609,7 @@ export default function ChatWindow({
     const h = histories.find((x) => x.id === id);
     if (!h) return;
     setActiveHistoryId(id);
+    setActiveAgent(h.agent === "cyber" ? "cyber" : "teller");
     setMessages(h.messages);
     setIsSidebarOpen(false);
     setIsImageHistoryOpen(false);
@@ -597,10 +695,43 @@ export default function ChatWindow({
     setLoading(true);
 
     try {
+      if (activeAgent === "cyber") {
+        if (pendingFile) throw new Error("CyberAgent currently works with Gmail and Calendar, not file attachments. Remove the attachment and try again.");
+        const token = isAuthenticated ? await getAccessTokenSilently() : null;
+        const response = await fetch("/api/cyber-agent", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            messages: updatedMessages.map(({ role, content }) => ({ role, content })),
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "CyberAgent could not complete that request.");
+        if (Number.isInteger(data.usageCount)) setMonthlyChatCount(data.usageCount);
+        const assistantMessage: Message = {
+          role: "assistant",
+          content: typeof data.reply === "string" ? data.reply : "CyberAgent completed the request.",
+          ...(data.pendingAction ? { pendingAction: data.pendingAction as CyberPendingAction } : {}),
+        };
+        const nextMessages = [...updatedMessages, assistantMessage];
+        setMessages(nextMessages);
+        if (activeHistoryId) {
+          setHistories((previous) => previous.map((history) => (
+            history.id === activeHistoryId
+              ? { ...history, agent: "cyber", messages: nextMessages, updatedAt: Date.now() }
+              : history
+          )));
+        }
+        return;
+      }
+
       const hasImageUpload = Boolean(pendingFile?.type.startsWith("image/"));
-      const shouldGenerateImage = agent === "teller" && (hasImageUpload
+      const shouldGenerateImage = hasImageUpload
         ? isImageModificationPrompt(userMessage.content)
-        : !pendingFile && isImageGenerationPrompt(userMessage.content));
+        : !pendingFile && isImageGenerationPrompt(userMessage.content);
 
       if (shouldGenerateImage) {
         const token = isAuthenticated ? await getAccessTokenSilently() : null;
@@ -646,7 +777,6 @@ export default function ChatWindow({
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
-          agent,
           messages: updatedMessages.map((msg) => {
             const isCurrentImage = msg === userMessage && msg.file?.type.startsWith("image/");
             if (msg.file) {
@@ -690,7 +820,7 @@ export default function ChatWindow({
               const item = next.splice(idx, 1)[0];
               next.unshift(item);
             } else {
-              next.unshift({ id: activeHistoryId, title: data.title, messages: [...updatedMessages, assistantMessage], updatedAt: Date.now(), agent });
+              next.unshift({ id: activeHistoryId, title: data.title, messages: [...updatedMessages, assistantMessage], updatedAt: Date.now() });
             }
             return next;
           });
@@ -741,6 +871,100 @@ export default function ChatWindow({
     } finally {
       setLoading(false);
       setPendingFile(null);
+    }
+  }
+
+  async function connectGoogleAccount() {
+    setGoogleConnectionBusy(true);
+    setGoogleConnectionError("");
+    try {
+      const token = await getAccessTokenSilently();
+      const response = await fetch("/api/google/connect", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await response.json();
+      if (!response.ok || typeof data.authorizationUrl !== "string") {
+        throw new Error(data.error || "Could not start Google account connection.");
+      }
+      window.location.assign(data.authorizationUrl);
+    } catch (error) {
+      setGoogleConnectionError(getErrorMessage(error));
+      setGoogleConnectionBusy(false);
+    }
+  }
+
+  async function disconnectGoogleAccount() {
+    setGoogleConnectionBusy(true);
+    setGoogleConnectionError("");
+    try {
+      const token = await getAccessTokenSilently();
+      const response = await fetch("/api/google/connect", {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Could not disconnect Google.");
+      setGoogleConnection({ configured: true, connected: false, email: null });
+      setGoogleConnectionNotice("Google account disconnected.");
+    } catch (error) {
+      setGoogleConnectionError(getErrorMessage(error));
+    } finally {
+      setGoogleConnectionBusy(false);
+    }
+  }
+
+  async function confirmCyberAction(messageIndex: number) {
+    const action = messages[messageIndex]?.pendingAction;
+    if (!action) return;
+    setConfirmingCyberAction(action.id);
+    try {
+      const token = await getAccessTokenSilently();
+      const response = await fetch("/api/cyber-agent/confirm", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ actionId: action.id }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Could not complete the confirmed action.");
+      const resultMessage = `${data.message || "Google action completed."}${data.link ? `\n\n[Open in Google](${data.link})` : ""}`;
+      setMessages((current) => {
+        const actionIndex = current.findIndex((message) => message.pendingAction?.id === action.id);
+        return current.flatMap((message, index) => {
+        if (index !== actionIndex) return [message];
+        return [
+          { ...message, pendingAction: undefined },
+          { role: "assistant", content: resultMessage },
+        ];
+        });
+      });
+      if (activeHistoryId) {
+        setHistories((previous) => previous.map((history) => (
+          history.id === activeHistoryId
+            ? {
+                ...history,
+                messages: history.messages.flatMap((message) => (
+                  message.pendingAction?.id !== action.id
+                    ? [message]
+                    : [{ ...message, pendingAction: undefined }, { role: "assistant", content: resultMessage }]
+                )),
+                updatedAt: Date.now(),
+              }
+            : history
+        )));
+      }
+    } catch (error) {
+      const resultMessage = `The confirmed action could not be completed: ${getErrorMessage(error)}`;
+      setMessages((current) => current.flatMap((message) => (
+        message.pendingAction?.id === action.id
+          ? [{ ...message, pendingAction: undefined }, { role: "assistant", content: resultMessage }]
+          : [message]
+      )));
+    } finally {
+      setConfirmingCyberAction(null);
     }
   }
 
@@ -914,7 +1138,7 @@ export default function ChatWindow({
     }
     setInput(message.content);
     setPendingFile(message.file || null);
-    window.setTimeout(() => document.querySelector<HTMLTextAreaElement>(`textarea[aria-label='Message ${agentProfile.name}']`)?.focus(), 0);
+    window.setTimeout(() => document.querySelector<HTMLInputElement>("input[placeholder='Ask Teller AI anything...']")?.focus(), 0);
   }
 
   return (
@@ -929,20 +1153,9 @@ export default function ChatWindow({
               </button>
             </h1>
 
-            <button className="mb-2 w-full rounded-lg bg-white px-4 py-2 font-medium text-black" onClick={createNewChat}>
+            <button className="mb-2 w-full rounded-lg bg-white px-4 py-2 font-medium text-black" onClick={() => createNewChat()}>
               New Chat
             </button>
-            <Link
-              href="/agents"
-              aria-current={showAgents ? "page" : undefined}
-              className={`mb-2 flex w-full items-center gap-2 rounded-lg px-4 py-2 text-left font-medium transition hover:bg-neutral-800 ${
-                showAgents ? "bg-neutral-800 text-white" : "text-neutral-300"
-              }`}
-              onClick={() => setIsSidebarOpen(false)}
-            >
-              <Bot size={18} aria-hidden="true" />
-              Agents
-            </Link>
             <button
               type="button"
               onClick={openGeneratedImageHistory}
@@ -954,6 +1167,24 @@ export default function ChatWindow({
               <Images size={18} aria-hidden="true" />
               History
             </button>
+            <button
+              type="button"
+              onClick={() => createNewChat("cyber")}
+              aria-current={activeAgent === "cyber" ? "page" : undefined}
+              className={`mt-2 flex w-full items-center gap-3 rounded-lg border px-3 py-3 text-left transition ${
+                activeAgent === "cyber"
+                  ? "border-violet-500/50 bg-violet-500/10 text-white"
+                  : "border-neutral-800 text-neutral-300 hover:bg-neutral-800"
+              }`}
+            >
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-violet-500/15 text-violet-200">
+                <Sparkles size={18} aria-hidden="true" />
+              </span>
+              <span className="min-w-0">
+                <span className="block font-medium">CyberAgent</span>
+                <span className="block text-xs text-neutral-400">Gmail & Calendar</span>
+              </span>
+            </button>
 
             {/* file attach control moved to the input area (left of prompt) */}
 
@@ -964,9 +1195,9 @@ export default function ChatWindow({
             <div className="min-h-0 flex-1 overflow-y-auto space-y-5 text-sm text-neutral-400 modern-scroll">
               <section aria-labelledby="chat-history-heading">
                 <h2 id="chat-history-heading" className="mb-2 px-1 text-xs font-semibold uppercase tracking-wider text-neutral-500">Chat history</h2>
-                {agentHistories.length === 0 && <p className="px-1">No chats yet</p>}
+                {histories.length === 0 && <p className="px-1">No chats yet</p>}
                 <div className="space-y-2">
-                  {agentHistories.slice(0, 6).map((h) => (
+                  {histories.slice(0, 6).map((h) => (
                     <div key={h.id} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter') loadHistory(h.id); }} onClick={() => loadHistory(h.id)} className={`flex items-center justify-between w-full rounded-md px-3 py-2 hover:bg-neutral-800 ${h.id === activeHistoryId ? "bg-neutral-800" : ""}`}>
                       <div className="min-w-0">
                         <div className="truncate text-white">{h.title}</div>
@@ -1037,9 +1268,16 @@ export default function ChatWindow({
               <button className="hidden h-10 w-10 items-center justify-center rounded-md bg-neutral-800 transition hover:bg-neutral-700 md:inline-flex" onClick={() => setIsHistoryVisible((v) => !v)} aria-label="Toggle history visibility" title="Toggle chat history">
                 <img src="/jupiter-black.svg" alt="" aria-hidden="true" className="h-7 w-7 object-contain" />
               </button>
-              <div className="flex items-center gap-2">
-                <img src="/jupiter-black.svg" alt="" aria-hidden="true" className="h-8 w-8 object-contain" />
-                <span className="font-semibold text-white">{showAgents ? "Agents" : agentProfile.name}</span>
+              {activeAgent === "cyber" ? (
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-500/15 text-violet-200">
+                  <Sparkles size={18} aria-hidden="true" />
+                </span>
+              ) : (
+                <img src="/jupiter-black.svg" alt="Teller AI" className="h-8 w-8 object-contain" />
+              )}
+              <div className="leading-tight">
+                <div className="text-sm font-semibold">{activeAgent === "cyber" ? "CyberAgent" : "Teller AI"}</div>
+                {activeAgent === "cyber" && <div className="text-xs text-neutral-400">Google Workspace assistant</div>}
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -1083,9 +1321,7 @@ export default function ChatWindow({
           </div>
         </header>
 
-        {showAgents ? (
-          <AgentPicker />
-        ) : isImageHistoryOpen ? (
+        {isImageHistoryOpen ? (
           <section aria-labelledby="generated-image-history-heading" className="min-h-0 flex-1 overflow-y-auto p-4 modern-scroll">
             <div className="mx-auto max-w-6xl">
               <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
@@ -1163,6 +1399,74 @@ export default function ChatWindow({
           <>
         <div className="min-h-0 flex-1 overflow-y-auto p-4 modern-scroll">
           <div className="mx-auto min-w-0 max-w-3xl space-y-4">
+            {activeAgent === "cyber" && (
+              <section className="rounded-2xl border border-violet-500/20 bg-violet-500/[0.06] p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h2 className="flex items-center gap-2 font-semibold text-white">
+                      <Sparkles size={17} className="text-violet-300" aria-hidden="true" />
+                      CyberAgent
+                    </h2>
+                    <p className="mt-1 text-sm text-neutral-300">
+                      Search Gmail and review your calendar. Drafts and new events always wait for your confirmation.
+                    </p>
+                  </div>
+                  {googleConnection?.connected && hasSession ? (
+                    <button
+                      type="button"
+                      onClick={() => void disconnectGoogleAccount()}
+                      disabled={googleConnectionBusy}
+                      className="rounded-lg border border-neutral-700 px-3 py-2 text-sm text-neutral-200 hover:bg-neutral-800 disabled:opacity-50"
+                    >
+                      {googleConnectionBusy ? "Disconnecting..." : "Disconnect"}
+                    </button>
+                  ) : hasSession && googleConnection?.configured ? (
+                    <button
+                      type="button"
+                      onClick={() => void connectGoogleAccount()}
+                      disabled={googleConnectionBusy}
+                      className="rounded-lg bg-white px-4 py-2 text-sm font-semibold text-neutral-950 hover:bg-neutral-200 disabled:opacity-50"
+                    >
+                      {googleConnectionBusy ? "Connecting..." : "Connect Google"}
+                    </button>
+                  ) : !hasSession ? (
+                    <button
+                      type="button"
+                      onClick={() => loginWithRedirect()}
+                      className="rounded-lg bg-white px-4 py-2 text-sm font-semibold text-neutral-950 hover:bg-neutral-200"
+                    >
+                      Log in to connect
+                    </button>
+                  ) : googleConnection && !googleConnection.configured ? (
+                    <span className="rounded-lg border border-amber-500/30 px-3 py-2 text-xs text-amber-200">
+                      Setup required
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-2 px-2 py-2 text-sm text-neutral-400" role="status">
+                      <LoaderCircle size={15} className="animate-spin" aria-hidden="true" />
+                      Checking Google connection...
+                    </span>
+                  )}
+                </div>
+                {googleConnection?.connected && (
+                  <div className="mt-3 flex items-center gap-2 text-sm text-emerald-300">
+                    <Check size={16} aria-hidden="true" />
+                    Connected as {googleConnection.email}
+                  </div>
+                )}
+                {!googleConnection?.configured && hasSession && googleConnection && (
+                  <p className="mt-3 text-xs leading-5 text-neutral-400">
+                    Configure the server-side Google OAuth settings and enable Gmail, Gmail MCP, and Calendar APIs. See the setup notes in README.
+                  </p>
+                )}
+                <div className="mt-3 flex flex-wrap gap-3 text-xs text-neutral-400">
+                  <span className="inline-flex items-center gap-1.5"><Mail size={13} aria-hidden="true" /> Gmail read & draft</span>
+                  <span className="inline-flex items-center gap-1.5"><CalendarDays size={13} aria-hidden="true" /> Calendar read & create</span>
+                </div>
+                {googleConnectionError && <p className="mt-3 text-sm text-rose-300" role="alert">{googleConnectionError}</p>}
+                {googleConnectionNotice && <p className="mt-2 text-sm text-emerald-300" role="status">{googleConnectionNotice}</p>}
+              </section>
+            )}
             {messages.map((message, index) => (
               message.role === "user" && message.file ? null :
               <div key={index} className={`min-w-0 max-w-[85%] overflow-hidden rounded-xl p-4 [overflow-wrap:anywhere] ${message.role === "user" ? "ml-auto bg-blue-600" : "mr-auto bg-neutral-800"}`}>
@@ -1184,6 +1488,47 @@ export default function ChatWindow({
                   ) : (
                     <button type="button" onClick={() => editMessage(message, index)} className="rounded px-1 text-xl leading-none text-neutral-300 hover:text-white" aria-label="Edit message" title="Edit message">✎</button>
                   )}
+                  {message.pendingAction && (
+                    <div className="mt-4 rounded-lg border border-amber-400/30 bg-amber-400/5 p-3 text-sm">
+                      <p className="font-medium text-amber-100">
+                        {message.pendingAction.type === "gmail.create_draft" ? "Create this Gmail draft?" : "Add this calendar event?"}
+                      </p>
+                      {message.pendingAction.type === "gmail.create_draft" ? (
+                        <dl className="mt-2 space-y-1 text-neutral-300">
+                          <div><dt className="inline text-neutral-500">To: </dt><dd className="inline">{String(message.pendingAction.arguments.to || "")}</dd></div>
+                          <div><dt className="inline text-neutral-500">Subject: </dt><dd className="inline">{String(message.pendingAction.arguments.subject || "")}</dd></div>
+                          <dd className="mt-2 whitespace-pre-wrap text-xs leading-5 text-neutral-400">{String(message.pendingAction.arguments.body || "")}</dd>
+                        </dl>
+                      ) : (
+                        <dl className="mt-2 space-y-1 text-neutral-300">
+                          <div><dt className="inline text-neutral-500">Event: </dt><dd className="inline">{String(message.pendingAction.arguments.summary || "")}</dd></div>
+                          <div><dt className="inline text-neutral-500">Starts: </dt><dd className="inline">{String(message.pendingAction.arguments.start || "")}</dd></div>
+                          <div><dt className="inline text-neutral-500">Ends: </dt><dd className="inline">{String(message.pendingAction.arguments.end || "")}</dd></div>
+                          {typeof message.pendingAction.arguments.description === "string" && (
+                            <dd className="mt-2 text-xs leading-5 text-neutral-400">{message.pendingAction.arguments.description}</dd>
+                          )}
+                        </dl>
+                      )}
+                      <div className="mt-3 flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void confirmCyberAction(index)}
+                          disabled={confirmingCyberAction === message.pendingAction.id}
+                          className="rounded-md bg-white px-3 py-1.5 text-xs font-semibold text-neutral-950 disabled:opacity-50"
+                        >
+                          {confirmingCyberAction === message.pendingAction.id ? "Working..." : "Confirm"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setMessages((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, pendingAction: undefined } : item))}
+                          disabled={confirmingCyberAction === message.pendingAction.id}
+                          className="rounded-md border border-neutral-600 px-3 py-1.5 text-xs text-neutral-200 hover:bg-neutral-700 disabled:opacity-50"
+                        >
+                          Not now
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
@@ -1200,7 +1545,7 @@ export default function ChatWindow({
             )}
 
             {loading && (
-              <div className="mr-auto max-w-[85%] rounded-xl bg-neutral-800 p-4 [overflow-wrap:anywhere]">{agentProfile.name} is thinking...</div>
+              <div className="mr-auto max-w-[85%] rounded-xl bg-neutral-800 p-4 [overflow-wrap:anywhere]">{activeAgent === "cyber" ? "CyberAgent is working..." : "Teller AI is thinking..."}</div>
             )}
 
             <div ref={messagesEndRef} />
@@ -1259,7 +1604,7 @@ export default function ChatWindow({
                 <textarea
                   rows={1}
                   className="max-h-36 min-h-11 min-w-0 flex-1 resize-none bg-transparent px-2 py-3 text-sm leading-5 text-white outline-none placeholder:text-neutral-500"
-                  placeholder={`Message ${agentProfile.name}...`}
+                  placeholder={activeAgent === "cyber" ? "Ask CyberAgent about Gmail or your calendar..." : "Ask Teller AI anything..."}
                   value={input}
                   disabled={isRecording || isTranscribing || loading}
                   onChange={(e) => setInput(e.target.value)}
@@ -1269,7 +1614,7 @@ export default function ChatWindow({
                       void sendMessage();
                     }
                   }}
-                  aria-label={`Message ${agentProfile.name}`}
+                  aria-label={`Message ${activeAgent === "cyber" ? "CyberAgent" : "Teller AI"}`}
                 />
 
                 <button

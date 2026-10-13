@@ -1,5 +1,3 @@
-import { AGENTS, CODEX_MODEL, type AgentId } from "@/lib/agents";
-
 export const TELLER_AI_SYSTEM_PROMPT = `
 You are Teller AI, a powerful conversational AI assistant.
 
@@ -42,7 +40,17 @@ function getMaxTokens(requestedTokens?: number) {
   const configuredTokens = Number.parseInt(process.env.AI_MAX_TOKENS || "2048", 10);
   const defaultTokens = Number.isFinite(configuredTokens) ? configuredTokens : 2048;
   const tokens = requestedTokens ?? defaultTokens;
-  return Math.min(MAX_ALLOWED_OUTPUT_TOKENS, Math.max(256, tokens));
+  return Math.min(MAX_ALLOWED_OUTPUT_TOKENS, Math.max(16, tokens));
+}
+
+export function getAffordableOutputTokens(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (!/"code"\s*:\s*402/.test(message)) return null;
+  const match = message.match(/can only afford\s+(\d+)/i);
+  const affordableTokens = match ? Number(match[1]) : 0;
+  return Number.isInteger(affordableTokens) && affordableTokens > 0
+    ? affordableTokens
+    : null;
 }
 
 function prepareMessages(messages: { role: string; content: string }[]) {
@@ -67,7 +75,7 @@ function prepareMessages(messages: { role: string; content: string }[]) {
 
 export async function callTellerAI(
   messages: { role: string; content: string }[],
-  options?: { maxTokens?: number; country?: string; agent?: AgentId },
+  options?: { maxTokens?: number; country?: string },
 ) {
   const preparedMessages = prepareMessages(messages);
   const response = await fetch(process.env.AI_API_BASE_URL as string, {
@@ -77,14 +85,13 @@ export async function callTellerAI(
       Authorization: `Bearer ${process.env.AI_API_KEY}`,
     },
     body: JSON.stringify({
-      model: options?.agent === "codex" ? CODEX_MODEL : process.env.AI_MODEL,
+      model: process.env.AI_MODEL,
       max_tokens: getMaxTokens(options?.maxTokens),
       messages: [
         {
           role: "system",
           content: [
             TELLER_AI_SYSTEM_PROMPT,
-            options?.agent && AGENTS[options.agent].systemPrompt,
             options?.country
               ? `The authenticated user's country is ${options.country}. When a question depends on location, use this country's laws, services, currency, spelling, units, and local context. Do not force localization when it is irrelevant, and follow a different location if the user explicitly asks about one.`
               : "",

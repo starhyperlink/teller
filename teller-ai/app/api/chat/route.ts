@@ -1,12 +1,11 @@
 import { NextResponse } from "next/server";
-import { callTellerAI } from "@/lib/ai";
+import { callTellerAI, getAffordableOutputTokens } from "@/lib/ai";
 import { analyzeImageWithOpenRouter } from "@/lib/openrouter-image";
 import { getAuth0User, getAuthenticatedUserId } from "@/lib/auth0-management";
 import { incrementUserUsage } from "@/lib/postgres";
 import { LOCAL_TEST_USER_ID } from "@/lib/local-test-auth";
 import { COUNTRY_OPTIONS } from "@/lib/country-options";
 import { MAX_IMAGE_BYTES, parseImageDataUrl } from "@/lib/image-input";
-import { isAgentId } from "@/lib/agents";
 
 export const runtime = "nodejs";
 
@@ -15,11 +14,6 @@ export async function POST(req: Request) {
     const userId = await getAuthenticatedUserId(req);
     const body = await req.json();
     const { messages } = body;
-    const agent = body.agent === undefined ? "teller" : body.agent;
-
-    if (!isAgentId(agent)) {
-      return NextResponse.json({ error: "Choose a valid chat agent." }, { status: 400 });
-    }
 
     if (!messages || !Array.isArray(messages)) {
       return NextResponse.json(
@@ -74,7 +68,7 @@ export async function POST(req: Request) {
     let reply: string;
     if (hasImage) {
       try {
-        reply = await analyzeImageWithOpenRouter(latestMessage.content, latestMessage.imageUrl, { country, agent });
+        reply = await analyzeImageWithOpenRouter(latestMessage.content, latestMessage.imageUrl, country);
       } catch (error) {
         console.error("OpenRouter image analysis error:", error);
         return NextResponse.json(
@@ -83,7 +77,16 @@ export async function POST(req: Request) {
         );
       }
     } else {
-      reply = await callTellerAI(messages, { country, agent });
+      try {
+        reply = await callTellerAI(messages, { country });
+      } catch (error) {
+        const affordableTokens = getAffordableOutputTokens(error);
+        if (!affordableTokens) throw error;
+        reply = await callTellerAI(messages, {
+          country,
+          maxTokens: affordableTokens,
+        });
+      }
     }
 
       // Ask the AI for a short title summarizing the conversation
@@ -93,7 +96,7 @@ export async function POST(req: Request) {
         const titleResult = await callTellerAI([
           ...messages,
           { role: "user", content: titlePrompt },
-        ], { maxTokens: 256, agent });
+        ], { maxTokens: 256 });
 
         // sanitize titleResult to a single line and reasonable length
         if (titleResult) {
@@ -109,6 +112,13 @@ export async function POST(req: Request) {
       return NextResponse.json({ reply, title, usageCount });
   } catch (error) {
     console.error("Chat API error:", error);
+
+    if (getAffordableOutputTokens(error) !== null || (error instanceof Error && /"code"\s*:\s*402/.test(error.message))) {
+      return NextResponse.json(
+        { error: "Teller AI is out of available OpenRouter credits. Add credits to your OpenRouter account, then try again." },
+        { status: 503 },
+      );
+    }
 
     return NextResponse.json(
       { error: "Something went wrong." },
