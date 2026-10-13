@@ -53,7 +53,12 @@ export function getAffordableOutputTokens(error: unknown) {
     : null;
 }
 
-function prepareMessages(messages: { role: string; content: string }[]) {
+export function isPromptTokenLimitError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /prompt tokens limit exceeded:\s*\d+\s*>\s*\d+/i.test(message);
+}
+
+function prepareMessages(messages: { role: string; content: string }[], compact = false) {
   const recentMessages = messages
     .filter((message) => message && typeof message.content === "string")
     .slice(-MAX_MESSAGES)
@@ -61,6 +66,11 @@ function prepareMessages(messages: { role: string; content: string }[]) {
       role: message.role === "assistant" ? "assistant" : "user",
       content: message.content.slice(0, MAX_MESSAGE_CHARS),
     }));
+
+  if (compact) {
+    const latestUserMessage = recentMessages.findLast((message) => message.role === "user");
+    return latestUserMessage ? [latestUserMessage] : recentMessages.slice(-1);
+  }
 
   let totalChars = 0;
   const boundedMessages = [];
@@ -75,9 +85,10 @@ function prepareMessages(messages: { role: string; content: string }[]) {
 
 export async function callTellerAI(
   messages: { role: string; content: string }[],
-  options?: { maxTokens?: number; country?: string },
+  options?: { maxTokens?: number; country?: string; compactPrompt?: boolean },
 ) {
-  const preparedMessages = prepareMessages(messages);
+  const compactPrompt = options?.compactPrompt ?? false;
+  const preparedMessages = prepareMessages(messages, compactPrompt);
   const response = await fetch(process.env.AI_API_BASE_URL as string, {
     method: "POST",
     headers: {
@@ -91,9 +102,13 @@ export async function callTellerAI(
         {
           role: "system",
           content: [
-            TELLER_AI_SYSTEM_PROMPT,
+            compactPrompt
+              ? "You are Teller AI, a helpful conversational assistant. Answer the latest user request clearly and concisely. Be honest, practical, and safe."
+              : TELLER_AI_SYSTEM_PROMPT,
             options?.country
-              ? `The authenticated user's country is ${options.country}. When a question depends on location, use this country's laws, services, currency, spelling, units, and local context. Do not force localization when it is irrelevant, and follow a different location if the user explicitly asks about one.`
+              ? compactPrompt
+                ? `The user's country is ${options.country}; use it when relevant.`
+                : `The authenticated user's country is ${options.country}. When a question depends on location, use this country's laws, services, currency, spelling, units, and local context. Do not force localization when it is irrelevant, and follow a different location if the user explicitly asks about one.`
               : "",
           ].filter(Boolean).join("\n\n"),
         },

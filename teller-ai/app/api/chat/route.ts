@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
-import { callTellerAI, getAffordableOutputTokens } from "@/lib/ai";
+import {
+  callTellerAI,
+  getAffordableOutputTokens,
+  isPromptTokenLimitError,
+} from "@/lib/ai";
 import { analyzeImageWithOpenRouter } from "@/lib/openrouter-image";
 import { getAuth0User, getAuthenticatedUserId } from "@/lib/auth0-management";
 import { incrementUserUsage } from "@/lib/postgres";
@@ -65,7 +69,8 @@ export async function POST(req: Request) {
       }
     }
 
-    let reply: string;
+    let reply: string | null = null;
+    let lastCreditError: unknown;
     if (hasImage) {
       try {
         reply = await analyzeImageWithOpenRouter(latestMessage.content, latestMessage.imageUrl, country);
@@ -77,16 +82,29 @@ export async function POST(req: Request) {
         );
       }
     } else {
-      try {
-        reply = await callTellerAI(messages, { country });
-      } catch (error) {
-        const affordableTokens = getAffordableOutputTokens(error);
-        if (!affordableTokens) throw error;
-        reply = await callTellerAI(messages, {
-          country,
-          maxTokens: affordableTokens,
-        });
+      let maxTokens: number | undefined;
+      let compactPrompt = false;
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        try {
+          reply = await callTellerAI(messages, { country, maxTokens, compactPrompt });
+          break;
+        } catch (error) {
+          lastCreditError = error;
+          const affordableTokens = getAffordableOutputTokens(error);
+          if (affordableTokens && (!maxTokens || affordableTokens < maxTokens)) {
+            maxTokens = affordableTokens;
+            continue;
+          }
+          if (isPromptTokenLimitError(error) && !compactPrompt) {
+            compactPrompt = true;
+            continue;
+          }
+          throw error;
+        }
       }
+    }
+    if (reply === null) {
+      throw lastCreditError || new Error("Teller AI could not fit this request within the available credits.");
     }
 
       // Ask the AI for a short title summarizing the conversation
