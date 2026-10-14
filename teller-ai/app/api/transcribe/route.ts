@@ -121,7 +121,7 @@ export async function POST(request: Request) {
     if (typeof transcription !== "string" || !transcription.trim()) {
       return NextResponse.json({ error: "No speech was detected. Try speaking again." }, { status: 422 });
     }
-    if (/\bplease provide\b/i.test(transcription) && /\b(audio|recording|speech file)\b/i.test(transcription)) {
+    if (/\bplease provide\b/i.test(transcription) && /\b(audio|recording|speech)\b/i.test(transcription)) {
       return NextResponse.json(
         { error: "The model did not detect the recording. Hold the button while speaking and try again." },
         { status: 422 },
