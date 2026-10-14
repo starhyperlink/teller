@@ -1,30 +1,47 @@
 import { NextResponse } from "next/server";
 import { getAuthenticatedUserId } from "@/lib/auth0-management";
+import { getNvidiaAIConfig } from "@/lib/nvidia-ai";
 
 export const runtime = "nodejs";
 
 const MAX_AUDIO_BYTES = 20 * 1024 * 1024;
-const TRANSCRIPTION_MAX_TOKENS = Number.parseInt(process.env.TRANSCRIPTION_MAX_TOKENS || "403", 10);
-const SUPPORTED_AUDIO_TYPES = new Set([
-  "audio/aac",
-  "audio/flac",
-  "audio/mp4",
-  "audio/mpeg",
-  "audio/ogg",
-  "audio/wav",
-  "audio/webm",
-  "audio/x-wav",
-]);
+const TRANSCRIPTION_MAX_TOKENS = Number.parseInt(process.env.TRANSCRIPTION_MAX_TOKENS || "1024", 10);
+
+function detectAudioFormat(audio: File, bytes: Buffer) {
+  const mimeType = audio.type.split(";")[0].trim().toLowerCase();
+  const filename = audio.name.toLowerCase();
+
+  if (
+    (bytes.length >= 12 &&
+      bytes.toString("ascii", 0, 4) === "RIFF" &&
+      bytes.toString("ascii", 8, 12) === "WAVE") ||
+    ["audio/wav", "audio/x-wav", "audio/wave", "audio/vnd.wave", "audio/x-pn-wav"].includes(mimeType) ||
+    filename.endsWith(".wav")
+  ) {
+    return "wav";
+  }
+
+  if (
+    (bytes.length >= 3 && bytes.toString("ascii", 0, 3) === "ID3") ||
+    (bytes.length >= 2 && bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0) ||
+    ["audio/mpeg", "audio/mp3", "audio/x-mpeg", "audio/x-mp3"].includes(mimeType) ||
+    filename.endsWith(".mp3")
+  ) {
+    return "mp3";
+  }
+
+  return null;
+}
 
 export async function POST(request: Request) {
   if (!(await getAuthenticatedUserId(request))) {
     return NextResponse.json({ error: "Sign in to use voice input." }, { status: 401 });
   }
 
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) {
+  if (!process.env.NVIDIA_API_KEY && !process.env.AI_API_KEY) {
     return NextResponse.json({ error: "Voice transcription is not configured." }, { status: 503 });
   }
+  const nvidiaConfig = getNvidiaAIConfig();
 
   let audio: FormDataEntryValue | null;
   try {
@@ -40,52 +57,60 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "The recording is too large. Keep it under 20 MB." }, { status: 413 });
   }
 
-  const mimeType = audio.type.split(";")[0].trim().toLowerCase();
-  if (!SUPPORTED_AUDIO_TYPES.has(mimeType)) {
-    return NextResponse.json({ error: "This audio format is not supported." }, { status: 415 });
+  let audioBytes: Buffer;
+  try {
+    audioBytes = Buffer.from(await audio.arrayBuffer());
+  } catch (error) {
+    console.error("Could not read transcription audio:", error);
+    return NextResponse.json({ error: "The audio recording could not be read." }, { status: 400 });
+  }
+
+  const audioFormat = detectAudioFormat(audio, audioBytes);
+  if (!audioFormat) {
+    return NextResponse.json({ error: "NVIDIA transcription supports WAV and MP3 audio." }, { status: 415 });
   }
 
   try {
-    const audioBase64 = Buffer.from(await audio.arrayBuffer()).toString("base64");
-    const audioFormat = mimeType === "audio/wav" || mimeType === "audio/x-wav" ? "wav" : "mp3";
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    const audioBase64 = audioBytes.toString("base64");
+    const response = await fetch(nvidiaConfig.apiBaseUrl, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: `Bearer ${nvidiaConfig.apiKey}`,
         "Content-Type": "application/json",
-        "HTTP-Referer": "https://github.com/danielrosehill/OR-Audio-Transcription-MCP",
-        "X-Title": "Teller AI Voice Input",
       },
       body: JSON.stringify({
-        model: "google/gemini-3-flash-preview",
+        model: nvidiaConfig.model,
         max_tokens: Number.isInteger(TRANSCRIPTION_MAX_TOKENS) && TRANSCRIPTION_MAX_TOKENS > 0
           ? TRANSCRIPTION_MAX_TOKENS
-          : 403,
+          : 1024,
         messages: [
           {
             role: "user",
             content: [
               {
-                type: "text",
-                text: "Transcribe this speech into clean, readable text. Add punctuation, remove filler words and false starts, and return only the transcription.",
+                type: "audio_url",
+                audio_url: { url: `data:audio/${audioFormat};base64,${audioBase64}` },
               },
               {
-                type: "input_audio",
-                input_audio: { data: audioBase64, format: audioFormat },
+                type: "text",
+                text: "Transcribe this speech into clean, readable text. Add punctuation, remove filler words and false starts, and return only the transcription.",
               },
             ],
           },
         ],
+        temperature: 0.2,
+        top_k: 1,
+        chat_template_kwargs: { enable_thinking: false },
       }),
     });
 
     const result = await response.json();
     if (!response.ok) {
       const providerError = typeof result.error?.message === "string" ? result.error.message : "";
-      console.error("OpenRouter transcription error:", providerError || response.status);
+      console.error("NVIDIA transcription error:", providerError || response.status);
       if (/more credits|can only afford/i.test(providerError)) {
         return NextResponse.json(
-          { error: "OpenRouter has insufficient credits for this recording. Try a shorter recording or add credits." },
+          { error: "NVIDIA could not process this recording. Try a shorter recording and try again." },
           { status: 402 },
         );
       }

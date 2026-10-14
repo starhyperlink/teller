@@ -1,3 +1,5 @@
+import { getNvidiaAIConfig } from "@/lib/nvidia-ai";
+
 export const TELLER_AI_SYSTEM_PROMPT = `
 You are Teller AI, a powerful conversational AI assistant.
 
@@ -94,14 +96,15 @@ export async function callTellerAI(
 ) {
   const compactPrompt = options?.compactPrompt ?? false;
   const preparedMessages = prepareMessages(messages, compactPrompt);
-  const response = await fetch(process.env.AI_API_BASE_URL as string, {
+  const { apiKey, apiBaseUrl, model } = getNvidiaAIConfig();
+  const response = await fetch(apiBaseUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${process.env.AI_API_KEY}`,
+      Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: process.env.AI_MODEL,
+      model,
       max_tokens: getMaxTokens(options?.maxTokens),
       messages: [
         {

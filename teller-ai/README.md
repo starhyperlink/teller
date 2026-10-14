@@ -20,7 +20,9 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 ## Image generation
 
-Image generation and uploaded-image understanding use the server-side `IMAGE_GENERATION_MODEL` and `OPENROUTER_API_KEY` environment variables. Set `IMAGE_GENERATION_MODEL=google/gemini-3.1-flash-image-preview` to select Nano Banana 2. Generated images default to 1K resolution. JPEG, PNG, and WebP uploads up to 3 MB are analyzed when the prompt asks a question and used as references when the prompt asks for an edit.
+Chat, image analysis, audio transcription, and CyberAgent use NVIDIA's Nemotron 3 Nano Omni model through its OpenAI-compatible chat completions API. Set the server-side `NVIDIA_API_KEY`; the endpoint and model default to `https://integrate.api.nvidia.com/v1/chat/completions` and `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning`. Optionally override them with `NVIDIA_API_BASE_URL` and `NVIDIA_MODEL`. `AI_API_KEY` is accepted as a legacy key variable.
+
+Image generation remains on OpenRouter because the NVIDIA model returns text rather than generated images. It uses the server-side `OPENROUTER_API_KEY` and `IMAGE_GENERATION_MODEL`; set `IMAGE_GENERATION_MODEL=google/gemini-3.1-flash-image-preview` to select Nano Banana 2. Generated images default to 1K resolution. JPEG, PNG, and WebP uploads up to 3 MB are analyzed when the prompt asks a question and used as references when the prompt asks for an edit.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 

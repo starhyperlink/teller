@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getAuthenticatedUserId } from "@/lib/auth0-management";
 import { incrementUserUsage, createGooglePendingAction } from "@/lib/postgres";
 import { LOCAL_TEST_USER_ID } from "@/lib/local-test-auth";
+import { getNvidiaAIConfig } from "@/lib/nvidia-ai";
 import {
   buildOpenAITools,
   callGmailTool,
@@ -33,12 +34,7 @@ function parseArguments(raw: string): Record<string, unknown> {
 }
 
 async function completeWithTools(messages: Array<Record<string, unknown>>, tools: unknown[]) {
-  const apiBaseUrl = process.env.AI_API_BASE_URL;
-  const apiKey = process.env.AI_API_KEY || process.env.OPENROUTER_API_KEY;
-  const model = process.env.AI_MODEL;
-  if (!apiBaseUrl || !apiKey || !model) {
-    throw new Error("The AI chat service is not configured.");
-  }
+  const { apiKey, apiBaseUrl, model } = getNvidiaAIConfig();
   const response = await fetch(apiBaseUrl, {
     method: "POST",
     headers: {

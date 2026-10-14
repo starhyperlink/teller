@@ -19,6 +19,7 @@ import {
 import katex from "katex";
 import "katex/dist/katex.min.css";
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { encodeAudioChunksToWav } from "@/lib/recording-audio";
 
 type Message = {
   role: "user" | "assistant";
@@ -1095,7 +1096,17 @@ export default function ChatWindow() {
       const supportedMimeType = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"]
         .find((mimeType) => MediaRecorder.isTypeSupported(mimeType));
       const recorder = new MediaRecorder(activeStream, supportedMimeType ? { mimeType: supportedMimeType } : undefined);
-      const chunks: BlobPart[] = [];
+      const context = new AudioContext();
+      await context.resume();
+      const source = context.createMediaStreamSource(activeStream);
+      const processor = context.createScriptProcessor(4096, 1, 1);
+      const chunks: Float32Array[] = [];
+      processor.onaudioprocess = (event) => {
+        chunks.push(event.inputBuffer.getChannelData(0).slice());
+        event.outputBuffer.getChannelData(0).fill(0);
+      };
+      source.connect(processor);
+      processor.connect(context.destination);
       mediaRecorderRef.current = recorder;
       audioStreamRef.current = activeStream;
 
@@ -1128,17 +1139,17 @@ export default function ChatWindow() {
         setSpeechError("Live captions are unavailable; the recording will be transcribed when you release.");
       }
 
-      recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) chunks.push(event.data);
-      };
       recorder.onstop = async () => {
+        processor.onaudioprocess = null;
+        source.disconnect();
+        processor.disconnect();
+        await context.close();
         activeStream.getTracks().forEach((track) => track.stop());
         mediaRecorderRef.current = null;
         audioStreamRef.current = null;
         speechRecognitionRef.current = null;
 
-        const recording = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
-        if (!recording.size) {
+        if (!chunks.length) {
           setIsTranscribing(false);
           setSpeechPreview("");
           setSpeechError("No audio was recorded. Hold the button while speaking and try again.");
@@ -1148,9 +1159,10 @@ export default function ChatWindow() {
         setIsTranscribing(true);
         setSpeechPreview((preview) => preview || "Transcribing audio...");
         try {
+          const wavRecording = encodeAudioChunksToWav(chunks, context.sampleRate);
           const token = await getAccessTokenSilently();
           const formData = new FormData();
-          formData.append("audio", recording, "speech");
+          formData.append("audio", wavRecording, "speech.wav");
           const response = await fetch("/api/transcribe", {
             method: "POST",
             headers: { Authorization: `Bearer ${token}` },

@@ -4,7 +4,7 @@ import {
   getAffordableOutputTokens,
   isPromptTokenLimitError,
 } from "@/lib/ai";
-import { analyzeImageWithOpenRouter } from "@/lib/openrouter-image";
+import { analyzeImageWithNvidia } from "@/lib/openrouter-image";
 import { getAuth0User, getAuthenticatedUserId } from "@/lib/auth0-management";
 import { incrementUserUsage } from "@/lib/postgres";
 import { LOCAL_TEST_USER_ID } from "@/lib/local-test-auth";
@@ -47,12 +47,9 @@ export async function POST(req: Request) {
     if (hasImage && typeof latestMessage.content !== "string") {
       return NextResponse.json({ error: "Add a question about the uploaded image." }, { status: 400 });
     }
-    if (
-      hasImage &&
-      (!process.env.OPENROUTER_API_KEY || !process.env.IMAGE_GENERATION_MODEL?.trim())
-    ) {
+    if (!process.env.NVIDIA_API_KEY && !process.env.AI_API_KEY) {
       return NextResponse.json(
-        { error: "Image analysis is not configured on the server." },
+        { error: "NVIDIA chat is not configured on the server." },
         { status: 503 },
       );
     }
@@ -74,9 +71,9 @@ export async function POST(req: Request) {
     let lastCreditError: unknown;
     if (hasImage) {
       try {
-        reply = await analyzeImageWithOpenRouter(latestMessage.content, latestMessage.imageUrl, country);
+        reply = await analyzeImageWithNvidia(latestMessage.content, latestMessage.imageUrl, country);
       } catch (error) {
-        console.error("OpenRouter image analysis error:", error);
+        console.error("NVIDIA image analysis error:", error);
         return NextResponse.json(
           { error: "Image analysis failed. Please try again." },
           { status: 502 },
@@ -143,7 +140,7 @@ export async function POST(req: Request) {
 
     if (getAffordableOutputTokens(error) !== null || (error instanceof Error && /"code"\s*:\s*402/.test(error.message))) {
       return NextResponse.json(
-        { error: "Teller AI is out of available OpenRouter credits. Add credits to your OpenRouter account, then try again." },
+        { error: "Teller AI could not complete the request with NVIDIA. Please try again shortly." },
         { status: 503 },
       );
     }

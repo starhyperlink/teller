@@ -1,3 +1,5 @@
+import { getNvidiaAIConfig } from "@/lib/nvidia-ai";
+
 const DEFAULT_RESOLUTION = "1K";
 const DEFAULT_ASPECT_RATIO = "1:1";
 
@@ -183,18 +185,14 @@ export async function generateImageWithOpenRouter(
   };
 }
 
-export async function analyzeImageWithOpenRouter(
+export async function analyzeImageWithNvidia(
   prompt: string,
   imageDataUrl: string,
   country?: string,
 ) {
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) {
-    throw new Error("Image analysis is not configured on the server.");
-  }
-  const model = getImageGenerationModel();
+  const { apiKey, apiBaseUrl, model } = getNvidiaAIConfig();
 
-  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+  const response = await fetch(apiBaseUrl, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -229,12 +227,12 @@ export async function analyzeImageWithOpenRouter(
   try {
     responseBody = await response.json();
   } catch {
-    throw new Error("OpenRouter returned an invalid image-analysis response.");
+    throw new Error("NVIDIA returned an invalid image-analysis response.");
   }
   const result = parseChatCompletionResponse(responseBody);
 
   if (!response.ok) {
-    throw new Error(result.error?.message || `OpenRouter image analysis failed (${response.status}).`);
+    throw new Error(result.error?.message || `NVIDIA image analysis failed (${response.status}).`);
   }
 
   const content = result.choices?.[0]?.message?.content;
@@ -244,7 +242,7 @@ export async function analyzeImageWithOpenRouter(
       ? content.map((part) => part.text || "").join("").trim()
       : "";
   if (!answer) {
-    throw new Error("OpenRouter returned no image-analysis answer.");
+    throw new Error("NVIDIA returned no image-analysis answer.");
   }
 
   return answer;
