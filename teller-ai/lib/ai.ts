@@ -85,7 +85,12 @@ function prepareMessages(messages: { role: string; content: string }[], compact 
 
 export async function callTellerAI(
   messages: { role: string; content: string }[],
-  options?: { maxTokens?: number; country?: string; compactPrompt?: boolean },
+  options?: {
+    maxTokens?: number;
+    country?: string;
+    compactPrompt?: boolean;
+    systemPrompt?: string;
+  },
 ) {
   const compactPrompt = options?.compactPrompt ?? false;
   const preparedMessages = prepareMessages(messages, compactPrompt);
@@ -110,6 +115,7 @@ export async function callTellerAI(
                 ? `The user's country is ${options.country}; use it when relevant.`
                 : `The authenticated user's country is ${options.country}. When a question depends on location, use this country's laws, services, currency, spelling, units, and local context. Do not force localization when it is irrelevant, and follow a different location if the user explicitly asks about one.`
               : "",
+            options?.systemPrompt || "",
           ].filter(Boolean).join("\n\n"),
         },
         ...preparedMessages,

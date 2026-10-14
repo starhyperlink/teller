@@ -48,6 +48,18 @@ Google may require OAuth app verification before external users can grant sensit
 
 CyberAgent treats retrieved email and calendar content as untrusted input. Users should still review draft/event details before confirming. For Google's Gmail MCP setup and security guidance, see [Configure the Gmail MCP server](https://developers.google.com/workspace/gmail/api/guides/configure-mcp-server).
 
+## CyberMaps: interactive maps and directions
+
+CyberMaps is available from the chat sidebar. Ask it to show a place or give directions, such as “directions from Cape Town Station to Table Mountain by transit.” The app embeds an interactive Google Maps search or directions map and stores the latest map request with the chat.
+
+To enable the embedded map:
+
+1. Enable the **Maps Embed API** in the Google Cloud project.
+2. Create an API key and restrict it to the Maps Embed API and your app's HTTP referrers.
+3. Set `NEXT_PUBLIC_GOOGLE_MAPS_EMBED_API_KEY` in `.env.local`. This key is intentionally visible in the browser for the embed request, so restrict it in Google Cloud; do not use an unrestricted key.
+
+Without the key, CyberMaps still provides a link to open the requested search or route in Google Maps. The embedded map provides current interactive Google Maps content; the chat assistant does not claim live traffic or route estimates.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:

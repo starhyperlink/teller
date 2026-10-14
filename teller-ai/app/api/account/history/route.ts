@@ -24,7 +24,10 @@ function sanitizeHistory(value: unknown[]) {
     .map((item) => ({
       id: typeof item.id === "string" ? item.id.slice(0, 100) : crypto.randomUUID(),
       title: typeof item.title === "string" ? item.title.slice(0, 120) : "New chat",
-      agent: item.agent === "cyber" ? "cyber" : "teller",
+      agent: item.agent === "cyber" || item.agent === "maps" ? item.agent : "teller",
+      ...(item.agent === "maps" && typeof item.mapQuery === "string"
+        ? { mapQuery: item.mapQuery.slice(0, 500) }
+        : {}),
       updatedAt: typeof item.updatedAt === "number" ? item.updatedAt : Date.now(),
       messages: Array.isArray(item.messages)
         ? item.messages

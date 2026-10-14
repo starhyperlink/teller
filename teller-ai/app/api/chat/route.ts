@@ -18,6 +18,7 @@ export async function POST(req: Request) {
     const userId = await getAuthenticatedUserId(req);
     const body = await req.json();
     const { messages } = body;
+    const isMapsAgent = body.agent === "maps";
 
     if (!messages || !Array.isArray(messages)) {
       return NextResponse.json(
@@ -86,7 +87,16 @@ export async function POST(req: Request) {
       let compactPrompt = false;
       for (let attempt = 0; attempt < 4; attempt += 1) {
         try {
-          reply = await callTellerAI(messages, { country, maxTokens, compactPrompt });
+          reply = await callTellerAI(messages, {
+            country,
+            maxTokens,
+            compactPrompt,
+            ...(isMapsAgent
+              ? {
+                  systemPrompt: "You are CyberMaps, a concise directional assistant. Help clarify locations and travel modes, but rely on the interactive Google map shown in the app for routes and current map information. Do not invent turn-by-turn directions, travel times, traffic conditions, or closures. Invite the user to open the map for current route details.",
+                }
+              : {}),
+          });
           break;
         } catch (error) {
           lastCreditError = error;

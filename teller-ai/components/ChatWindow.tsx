@@ -9,6 +9,7 @@ import {
   Check,
   Images,
   LoaderCircle,
+  MapPinned,
   Mail,
   Mic,
   Paperclip,
@@ -34,7 +35,7 @@ type Message = {
   } | null;
 };
 
-type AgentMode = "teller" | "cyber";
+type AgentMode = "teller" | "cyber" | "maps";
 type CyberPendingAction = {
   id: string;
   type: "gmail.create_draft" | "calendar.create_event";
@@ -45,6 +46,7 @@ type HistoryItem = {
   id: string;
   title: string;
   agent?: AgentMode;
+  mapQuery?: string;
   messages: Message[];
   updatedAt: number;
 };
@@ -54,6 +56,79 @@ type GoogleConnectionStatus = {
   connected: boolean;
   email: string | null;
 };
+
+const GOOGLE_MAPS_EMBED_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_EMBED_API_KEY || "";
+
+type MapRequest = {
+  origin: string | null;
+  destination: string;
+  mode: "driving" | "walking" | "bicycling" | "transit";
+};
+
+function parseMapRequest(query: string): MapRequest {
+  const cleanedQuery = query.trim().slice(0, 500);
+  const routeMatch = cleanedQuery.match(
+    /\bfrom\s+(.+?)\s+to\s+(.+?)(?=\s+(?:via|using)\b|[?.!,;]|$)/i,
+  ) || cleanedQuery.match(
+    /\bdirections?\s+between\s+(.+?)\s+and\s+(.+?)(?=[?.!,;]|$)/i,
+  );
+  const modeMatch = cleanedQuery.match(/\b(driving|walking|bicycling|cycling|transit)\b/i);
+  const mode = modeMatch?.[1].toLowerCase();
+  const travelMode = mode === "walking"
+    ? "walking"
+    : mode === "bicycling" || mode === "cycling"
+      ? "bicycling"
+      : mode === "transit"
+        ? "transit"
+        : "driving";
+
+  if (routeMatch) {
+    return {
+      origin: routeMatch[1].trim().slice(0, 200),
+      destination: routeMatch[2].trim().slice(0, 200),
+      mode: travelMode,
+    };
+  }
+
+  const destinationMatch = cleanedQuery.match(/\b(?:map|show|find|search|locate|where(?:\s+is)?)\s+(.+?)(?=[?.!,;]|$)/i);
+  return {
+    origin: null,
+    destination: (destinationMatch?.[1] || cleanedQuery).trim().slice(0, 200),
+    mode: travelMode,
+  };
+}
+
+function getMapEmbedUrl(query: string, apiKey: string) {
+  const mapRequest = parseMapRequest(query);
+  const mapUrl = new URL(
+    `https://www.google.com/maps/embed/v1/${mapRequest.origin ? "directions" : "search"}`,
+  );
+  mapUrl.searchParams.set("key", apiKey);
+  if (mapRequest.origin) {
+    mapUrl.searchParams.set("origin", mapRequest.origin);
+    mapUrl.searchParams.set("destination", mapRequest.destination);
+    mapUrl.searchParams.set("mode", mapRequest.mode);
+  } else {
+    mapUrl.searchParams.set("q", mapRequest.destination);
+  }
+  return mapUrl.toString();
+}
+
+function getGoogleMapsLink(query: string) {
+  const mapRequest = parseMapRequest(query);
+  const mapUrl = new URL("https://www.google.com/maps/dir/");
+  if (mapRequest.origin) {
+    mapUrl.searchParams.set("api", "1");
+    mapUrl.searchParams.set("origin", mapRequest.origin);
+    mapUrl.searchParams.set("destination", mapRequest.destination);
+    mapUrl.searchParams.set("travelmode", mapRequest.mode);
+  } else {
+    mapUrl.pathname = "/maps/search/";
+    mapUrl.searchParams.set("api", "1");
+    mapUrl.searchParams.set("query", mapRequest.destination);
+  }
+  return mapUrl.toString();
+}
 
 type GeneratedImage = {
   id: string;
@@ -270,6 +345,7 @@ export default function ChatWindow() {
   const [histories, setHistories] = useState<HistoryItem[]>([]);
   const [activeHistoryId, setActiveHistoryId] = useState<string | null>(null);
   const [activeAgent, setActiveAgent] = useState<AgentMode>("teller");
+  const [activeMapQuery, setActiveMapQuery] = useState("");
   const historyHydratedRef = useRef(false);
   const agentQueryHandledRef = useRef(false);
 
@@ -389,6 +465,7 @@ export default function ChatWindow() {
     try {
       setActiveHistoryId(null);
       setActiveAgent("teller");
+      setActiveMapQuery("");
       setMessages([
         {
           role: "assistant",
@@ -414,6 +491,7 @@ export default function ChatWindow() {
         setActiveHistoryId(initial.id);
         setMessages(initialMessages);
         setActiveAgent("teller");
+        setActiveMapQuery("");
         setMonthlyChatCount(0);
         historyHydratedRef.current = true;
         return;
@@ -430,7 +508,8 @@ export default function ChatWindow() {
             setHistories(remoteHistories);
             setActiveHistoryId(remoteHistories[0].id);
             setMessages(remoteHistories[0].messages);
-            setActiveAgent(remoteHistories[0].agent === "cyber" ? "cyber" : "teller");
+            setActiveAgent(remoteHistories[0].agent === "cyber" || remoteHistories[0].agent === "maps" ? remoteHistories[0].agent : "teller");
+            setActiveMapQuery(typeof remoteHistories[0].mapQuery === "string" ? remoteHistories[0].mapQuery : "");
           } else {
             const initialMessages: Message[] = [
               {
@@ -449,6 +528,7 @@ export default function ChatWindow() {
             setActiveHistoryId(initial.id);
             setMessages(initialMessages);
             setActiveAgent("teller");
+            setActiveMapQuery("");
           }
         })
         .catch(() => {
@@ -481,14 +561,15 @@ export default function ChatWindow() {
   useEffect(() => {
     if (!isMounted || isAuthLoading || !historyHydratedRef.current || agentQueryHandledRef.current) return;
     const url = new URL(window.location.href);
-    if (url.searchParams.get("agent") !== "cyber") {
+    const requestedAgent = url.searchParams.get("agent");
+    if (requestedAgent !== "cyber" && requestedAgent !== "maps") {
       agentQueryHandledRef.current = true;
       return;
     }
     agentQueryHandledRef.current = true;
     url.searchParams.delete("agent");
     window.history.replaceState({}, document.title, `${url.pathname}${url.search}`);
-    createNewChat("cyber");
+    createNewChat(requestedAgent);
   }, [histories, isAuthLoading, isMounted]);
 
   // Persist active history whenever messages change
@@ -505,6 +586,7 @@ export default function ChatWindow() {
         id: activeHistoryId,
         title: finalTitle,
         agent: activeAgent,
+        ...(activeAgent === "maps" ? { mapQuery: activeMapQuery } : {}),
         messages,
         updatedAt: Date.now(),
       };
@@ -516,7 +598,7 @@ export default function ChatWindow() {
       }
       return next;
     });
-  }, [messages, activeAgent, activeHistoryId]);
+  }, [messages, activeAgent, activeMapQuery, activeHistoryId]);
 
   useEffect(() => {
     if (!isAuthenticated || !historyHydratedRef.current) return;
@@ -557,13 +639,16 @@ export default function ChatWindow() {
         role: "assistant",
         content: agent === "cyber"
           ? "Hi, I’m CyberAgent. Connect your Google account to search and summarize Gmail, review your calendar, create email drafts, and propose calendar events. I’ll ask before creating drafts or events."
-          : "Hi, I’m Teller AI. Ask me anything — I can help with research, writing, business, coding, summaries, and ideas.",
+          : agent === "maps"
+            ? "Hi, I’m CyberMaps. Ask me to find a place or get directions, for example “directions from Cape Town Station to Table Mountain by transit.” The live map will update alongside our chat."
+            : "Hi, I’m Teller AI. Ask me anything — I can help with research, writing, business, coding, summaries, and ideas.",
       },
     ];
     const newItem: HistoryItem = {
       id,
       title: "New chat",
       agent,
+      ...(agent === "maps" ? { mapQuery: "" } : {}),
       messages: initialMessages,
       updatedAt: Date.now(),
     };
@@ -571,6 +656,7 @@ export default function ChatWindow() {
     setHistories(next);
     setActiveHistoryId(id);
     setActiveAgent(agent);
+    setActiveMapQuery("");
     setMessages(initialMessages);
     setIsSidebarOpen(false);
   }
@@ -589,7 +675,8 @@ export default function ChatWindow() {
         if (next.length) {
           setActiveHistoryId(next[0].id);
           setMessages(next[0].messages);
-          setActiveAgent(next[0].agent === "cyber" ? "cyber" : "teller");
+          setActiveAgent(next[0].agent === "cyber" || next[0].agent === "maps" ? next[0].agent : "teller");
+          setActiveMapQuery(typeof next[0].mapQuery === "string" ? next[0].mapQuery : "");
         } else {
           const newId = Date.now().toString();
           const initialMessages: Message[] = [
@@ -599,6 +686,7 @@ export default function ChatWindow() {
           setHistories([newHist]);
           setActiveHistoryId(newId);
           setActiveAgent("teller");
+          setActiveMapQuery("");
           setMessages(initialMessages);
         }
       }
@@ -610,7 +698,8 @@ export default function ChatWindow() {
     const h = histories.find((x) => x.id === id);
     if (!h) return;
     setActiveHistoryId(id);
-    setActiveAgent(h.agent === "cyber" ? "cyber" : "teller");
+    setActiveAgent(h.agent === "cyber" || h.agent === "maps" ? h.agent : "teller");
+    setActiveMapQuery(typeof h.mapQuery === "string" ? h.mapQuery : "");
     setMessages(h.messages);
     setIsSidebarOpen(false);
     setIsImageHistoryOpen(false);
@@ -694,6 +783,16 @@ export default function ChatWindow() {
     setInput("");
     setSpeechPreview("");
     setLoading(true);
+    if (activeAgent === "maps") {
+      setActiveMapQuery(userMessage.content);
+      if (activeHistoryId) {
+        setHistories((previous) => previous.map((history) => (
+          history.id === activeHistoryId
+            ? { ...history, agent: "maps", mapQuery: userMessage.content }
+            : history
+        )));
+      }
+    }
 
     try {
       if (activeAgent === "cyber") {
@@ -727,6 +826,9 @@ export default function ChatWindow() {
           )));
         }
         return;
+      }
+      if (activeAgent === "maps" && pendingFile) {
+        throw new Error("CyberMaps works with locations and directions, not file attachments. Remove the attachment and try again.");
       }
 
       const hasImageUpload = Boolean(pendingFile?.type.startsWith("image/"));
@@ -778,6 +880,7 @@ export default function ChatWindow() {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
+          agent: activeAgent,
           messages: updatedMessages.map((msg) => {
             const isCurrentImage = msg === userMessage && msg.file?.type.startsWith("image/");
             if (msg.file) {
@@ -1186,6 +1289,24 @@ export default function ChatWindow() {
                 <span className="block text-xs text-neutral-400">Gmail & Calendar</span>
               </span>
             </button>
+            <button
+              type="button"
+              onClick={() => createNewChat("maps")}
+              aria-current={activeAgent === "maps" ? "page" : undefined}
+              className={`mt-2 flex w-full items-center gap-3 rounded-lg border px-3 py-3 text-left transition ${
+                activeAgent === "maps"
+                  ? "border-sky-500/50 bg-sky-500/10 text-white"
+                  : "border-neutral-800 text-neutral-300 hover:bg-neutral-800"
+              }`}
+            >
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-sky-500/15 text-sky-200">
+                <MapPinned size={18} aria-hidden="true" />
+              </span>
+              <span className="min-w-0">
+                <span className="block font-medium">CyberMaps</span>
+                <span className="block text-xs text-neutral-400">Directions & live map</span>
+              </span>
+            </button>
 
             {/* file attach control moved to the input area (left of prompt) */}
 
@@ -1273,12 +1394,17 @@ export default function ChatWindow() {
                 <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-500/15 text-violet-200">
                   <Sparkles size={18} aria-hidden="true" />
                 </span>
+              ) : activeAgent === "maps" ? (
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-sky-500/15 text-sky-200">
+                  <MapPinned size={18} aria-hidden="true" />
+                </span>
               ) : (
                 <img src="/jupiter-black.svg" alt="Teller AI" className="h-8 w-8 object-contain" />
               )}
               <div className="leading-tight">
-                <div className="text-sm font-semibold">{activeAgent === "cyber" ? "CyberAgent" : "Teller AI"}</div>
+                <div className="text-sm font-semibold">{activeAgent === "cyber" ? "CyberAgent" : activeAgent === "maps" ? "CyberMaps" : "Teller AI"}</div>
                 {activeAgent === "cyber" && <div className="text-xs text-neutral-400">Google Workspace assistant</div>}
+                {activeAgent === "maps" && <div className="text-xs text-neutral-400">Directions & interactive maps</div>}
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -1399,7 +1525,76 @@ export default function ChatWindow() {
         ) : (
           <>
         <div className="min-h-0 flex-1 overflow-y-auto p-4 modern-scroll">
-          <div className="mx-auto min-w-0 max-w-3xl space-y-4">
+          <div className={`mx-auto min-w-0 space-y-4 ${activeAgent === "maps" ? "max-w-5xl" : "max-w-3xl"}`}>
+            {activeAgent === "maps" && (
+              <section className="overflow-hidden rounded-2xl border border-sky-500/20 bg-sky-500/[0.04]">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-800 px-4 py-3">
+                  <div>
+                    <h2 className="flex items-center gap-2 font-semibold text-white">
+                      <MapPinned size={17} className="text-sky-300" aria-hidden="true" />
+                      CyberMaps live map
+                    </h2>
+                    <p className="mt-1 text-xs text-neutral-400">
+                      {activeMapQuery
+                        ? parseMapRequest(activeMapQuery).origin
+                          ? `${parseMapRequest(activeMapQuery).origin} to ${parseMapRequest(activeMapQuery).destination}`
+                          : parseMapRequest(activeMapQuery).destination
+                        : "Ask for a place or directions to load the map."}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {activeMapQuery && (
+                      <a
+                        href={getGoogleMapsLink(activeMapQuery)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="rounded-lg border border-neutral-700 px-3 py-2 text-xs text-neutral-200 transition hover:bg-neutral-800"
+                      >
+                        Open in Google Maps
+                      </a>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => createNewChat("teller")}
+                      className="inline-flex items-center gap-2 rounded-lg border border-neutral-700 px-3 py-2 text-sm text-neutral-200 transition hover:bg-neutral-800"
+                    >
+                      <ArrowLeft size={15} aria-hidden="true" />
+                      Back to chat
+                    </button>
+                  </div>
+                </div>
+                {activeMapQuery && GOOGLE_MAPS_EMBED_API_KEY ? (
+                  <iframe
+                    key={`${activeHistoryId || "new"}-${activeMapQuery}`}
+                    title={`Interactive map for ${parseMapRequest(activeMapQuery).destination}`}
+                    src={getMapEmbedUrl(activeMapQuery, GOOGLE_MAPS_EMBED_API_KEY)}
+                    className="h-[min(55vh,480px)] min-h-[300px] w-full border-0 bg-neutral-900"
+                    loading="lazy"
+                    allowFullScreen
+                    referrerPolicy="strict-origin-when-cross-origin"
+                  />
+                ) : (
+                  <div className="flex min-h-[300px] flex-col items-center justify-center gap-3 px-6 py-10 text-center">
+                    <MapPinned size={34} className="text-sky-300" aria-hidden="true" />
+                    <p className="max-w-xl text-sm text-neutral-300">
+                      {activeMapQuery
+                        ? "Add NEXT_PUBLIC_GOOGLE_MAPS_EMBED_API_KEY to .env.local and enable the Maps Embed API in Google Cloud to show the live map here."
+                        : "Try “directions from Cape Town Station to Table Mountain” or search for a place."}
+                    </p>
+                    {activeMapQuery && (
+                      <a
+                        href={getGoogleMapsLink(activeMapQuery)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="rounded-lg bg-white px-4 py-2 text-sm font-medium text-neutral-950 hover:bg-neutral-200"
+                      >
+                        View this in Google Maps
+                      </a>
+                    )}
+                  </div>
+                )}
+              </section>
+            )}
             {activeAgent === "cyber" && (
               <section className="rounded-2xl border border-violet-500/20 bg-violet-500/[0.06] p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1554,7 +1749,7 @@ export default function ChatWindow() {
             )}
 
             {loading && (
-              <div className="mr-auto max-w-[85%] rounded-xl bg-neutral-800 p-4 [overflow-wrap:anywhere]">{activeAgent === "cyber" ? "CyberAgent is working..." : "Teller AI is thinking..."}</div>
+              <div className="mr-auto max-w-[85%] rounded-xl bg-neutral-800 p-4 [overflow-wrap:anywhere]">{activeAgent === "cyber" ? "CyberAgent is working..." : activeAgent === "maps" ? "CyberMaps is working..." : "Teller AI is thinking..."}</div>
             )}
 
             <div ref={messagesEndRef} />
@@ -1613,7 +1808,7 @@ export default function ChatWindow() {
                 <textarea
                   rows={1}
                   className="max-h-36 min-h-11 min-w-0 flex-1 resize-none bg-transparent px-2 py-3 text-sm leading-5 text-white outline-none placeholder:text-neutral-500"
-                  placeholder={activeAgent === "cyber" ? "Ask CyberAgent about Gmail or your calendar..." : "Ask Teller AI anything..."}
+                  placeholder={activeAgent === "cyber" ? "Ask CyberAgent about Gmail or your calendar..." : activeAgent === "maps" ? "Search for a place or ask for directions..." : "Ask Teller AI anything..."}
                   value={input}
                   disabled={isRecording || isTranscribing || loading}
                   onChange={(e) => setInput(e.target.value)}
@@ -1623,7 +1818,7 @@ export default function ChatWindow() {
                       void sendMessage();
                     }
                   }}
-                  aria-label={`Message ${activeAgent === "cyber" ? "CyberAgent" : "Teller AI"}`}
+                  aria-label={`Message ${activeAgent === "cyber" ? "CyberAgent" : activeAgent === "maps" ? "CyberMaps" : "Teller AI"}`}
                 />
 
                 <button
