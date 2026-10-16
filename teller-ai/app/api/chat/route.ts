@@ -4,6 +4,7 @@ import {
   getAffordableOutputTokens,
   isPromptTokenLimitError,
 } from "@/lib/ai";
+import { hasChatAIProvider } from "@/lib/ai-router";
 import { analyzeImageWithNvidia } from "@/lib/openrouter-image";
 import { getAuth0User, getAuthenticatedUserId } from "@/lib/auth0-management";
 import { incrementUserUsage } from "@/lib/postgres";
@@ -47,9 +48,13 @@ export async function POST(req: Request) {
     if (hasImage && typeof latestMessage.content !== "string") {
       return NextResponse.json({ error: "Add a question about the uploaded image." }, { status: 400 });
     }
-    if (!process.env.NVIDIA_API_KEY && !process.env.AI_API_KEY) {
+    if (hasImage
+      ? !process.env.NVIDIA_API_KEY && !process.env.AI_API_KEY
+      : !hasChatAIProvider()) {
       return NextResponse.json(
-        { error: "NVIDIA chat is not configured on the server." },
+        { error: hasImage
+          ? "NVIDIA image analysis is not configured on the server."
+          : "Chat AI is not configured on the server." },
         { status: 503 },
       );
     }
@@ -140,7 +145,7 @@ export async function POST(req: Request) {
 
     if (getAffordableOutputTokens(error) !== null || (error instanceof Error && /"code"\s*:\s*402/.test(error.message))) {
       return NextResponse.json(
-        { error: "Teller AI could not complete the request with NVIDIA. Please try again shortly." },
+        { error: "Teller AI could not complete the request. Please try again shortly." },
         { status: 503 },
       );
     }

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getAuthenticatedUserId } from "@/lib/auth0-management";
 import { incrementUserUsage, createGooglePendingAction } from "@/lib/postgres";
 import { LOCAL_TEST_USER_ID } from "@/lib/local-test-auth";
-import { getNvidiaAIConfig } from "@/lib/nvidia-ai";
+import { callRoutedChatCompletion } from "@/lib/ai-router";
 import {
   buildOpenAITools,
   callGmailTool,
@@ -34,28 +34,13 @@ function parseArguments(raw: string): Record<string, unknown> {
 }
 
 async function completeWithTools(messages: Array<Record<string, unknown>>, tools: unknown[]) {
-  const { apiKey, apiBaseUrl, model } = getNvidiaAIConfig();
-  const response = await fetch(apiBaseUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
+  const payload: unknown = await callRoutedChatCompletion({
       max_tokens: 2048,
       messages,
       tools,
       tool_choice: "auto",
       temperature: 0.2,
-    }),
-    cache: "no-store",
   });
-  if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(`CyberAgent could not reach the AI service (${response.status})${detail ? `: ${detail.slice(0, 400)}` : "."}`);
-  }
-  const payload: unknown = await response.json();
   if (!payload || typeof payload !== "object" || !("choices" in payload) || !Array.isArray(payload.choices)) {
     throw new Error("The AI service returned an invalid response.");
   }

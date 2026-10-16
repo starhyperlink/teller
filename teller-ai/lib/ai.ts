@@ -1,4 +1,4 @@
-import { getNvidiaAIConfig } from "@/lib/nvidia-ai";
+import { callRoutedChatCompletion } from "@/lib/ai-router";
 
 export const TELLER_AI_SYSTEM_PROMPT = `
 You are Teller AI, a powerful conversational AI assistant.
@@ -96,15 +96,9 @@ export async function callTellerAI(
 ) {
   const compactPrompt = options?.compactPrompt ?? false;
   const preparedMessages = prepareMessages(messages, compactPrompt);
-  const { apiKey, apiBaseUrl, model } = getNvidiaAIConfig();
-  const response = await fetch(apiBaseUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
+  const data = await callRoutedChatCompletion<{
+    choices?: { message?: { content?: string | null } }[];
+  }>({
       max_tokens: getMaxTokens(options?.maxTokens),
       messages: [
         {
@@ -124,15 +118,7 @@ export async function callTellerAI(
         ...preparedMessages,
       ],
       temperature: 0.7,
-    }),
   });
-
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(error);
-  }
-
-  const data = await response.json();
 
   return (
     data.choices?.[0]?.message?.content ||
