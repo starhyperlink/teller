@@ -10,6 +10,9 @@ export default function HomePage() {
         <p className="mt-1 text-sm font-semibold tracking-[0.08em] text-white">
           Sizwe Zitha
         </p>
+        <p className="mt-1 text-xs font-medium tracking-[0.08em] text-neutral-400">
+          TellerWorkflow™
+        </p>
       </div>
       <section className="mx-auto flex min-h-screen max-w-6xl flex-col items-center justify-center px-6 text-center">
         <div className="mb-6 rounded-full border border-neutral-700 px-4 py-2 text-sm text-neutral-300">
