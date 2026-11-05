@@ -1,4 +1,4 @@
-import { getNvidiaAIConfig } from "@/lib/nvidia-ai";
+import { getNvidiaChatConfig } from "@/lib/nvidia-ai";
 
 const OPENROUTER_CHAT_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions";
 const OPENROUTER_ROUTER_MODEL = "openrouter/auto";
@@ -22,7 +22,7 @@ function getChatProviders(): ChatProvider[] {
   const providers: ChatProvider[] = [];
 
   if (process.env.NVIDIA_API_KEY || process.env.AI_API_KEY) {
-    const config = getNvidiaAIConfig();
+    const config = getNvidiaChatConfig();
     providers.push({ name: "NVIDIA", ...config });
   }
 
