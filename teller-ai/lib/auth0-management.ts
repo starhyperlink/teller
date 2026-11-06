@@ -1,6 +1,8 @@
+import { createRemoteJWKSet, jwtVerify } from "jose";
 import { LOCAL_TEST_ACCESS_TOKEN, LOCAL_TEST_USER_ID } from "@/lib/local-test-auth";
 
 const auth0Domain = process.env.NEXT_PUBLIC_AUTH0_DOMAIN;
+let auth0Jwks: ReturnType<typeof createRemoteJWKSet> | null = null;
 
 function getManagementApiUrl(path: string) {
   if (!auth0Domain) throw new Error("NEXT_PUBLIC_AUTH0_DOMAIN is not configured.");
@@ -121,7 +123,22 @@ export async function getAuthenticatedUserId(request: Request) {
     cache: "no-store",
   });
 
-  if (!response.ok) return null;
-  const user = await response.json();
-  return typeof user.sub === "string" ? user.sub : null;
+  if (response.ok) {
+    const user = await response.json();
+    if (typeof user.sub === "string") return user.sub;
+  }
+
+  const audience = process.env.NEXT_PUBLIC_AUTH0_AUDIENCE;
+  if (!audience) return null;
+
+  try {
+    auth0Jwks ??= createRemoteJWKSet(new URL(`https://${auth0Domain}/.well-known/jwks.json`));
+    const { payload } = await jwtVerify(authorization.slice("Bearer ".length), auth0Jwks, {
+      issuer: `https://${auth0Domain}/`,
+      audience,
+    });
+    return typeof payload.sub === "string" ? payload.sub : null;
+  } catch {
+    return null;
+  }
 }
