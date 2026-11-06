@@ -26,7 +26,7 @@ Image generation uses Cloudflare Workers AI's `@cf/black-forest-labs/flux-2-klei
 
 Daily image-generation limits are 5 for Free, 25 for Pro, and 30 for Business plans. Limits reset at midnight UTC. When the daily limit is reached, the chat reports that image generation is unavailable until tomorrow.
 
-Image generation reads the active plan from Auth0. Configure server-side `AUTH0_CLIENT_ID` and `AUTH0_CLIENT_SECRET` using a Machine-to-Machine application authorized for the Auth0 Management API with the `read:users` permission. Keep these separate from the public Auth0 SPA client ID and secret; never expose them as `NEXT_PUBLIC_*` variables. Put local variables in `teller-ai/.env.local`, or set them in the deployed app's server environment.
+Account profiles and plan subscriptions are stored in PostgreSQL. Profile updates and PayPal subscription activation do not require Auth0 Management API access. Existing subscribers whose plan was previously stored only in Auth0 metadata need their `teller_user_accounts.plan_key` migrated in PostgreSQL.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 

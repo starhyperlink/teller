@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getAuthenticatedUserId } from "@/lib/auth0-management";
+import { getAuthenticatedUserId } from "@/lib/auth0-auth";
 import { incrementUserUsage, createGooglePendingAction } from "@/lib/postgres";
 import { LOCAL_TEST_USER_ID } from "@/lib/local-test-auth";
 import { callRoutedChatCompletion } from "@/lib/ai-router";

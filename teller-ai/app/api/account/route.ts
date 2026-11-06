@@ -1,21 +1,20 @@
 import { NextResponse } from "next/server";
-import {
-  getAuth0User,
-  getAuthenticatedUserId,
-  updateAuth0Profile,
-} from "@/lib/auth0-management";
+import { getAuthenticatedUser } from "@/lib/auth0-auth";
 import { plans, type PlanKey } from "@/lib/plans";
 import {
   getCurrentUsageMonth,
+  getUserAccountData,
   getUserChatData,
   getUserDailyImageUsage,
+  updateUserAccountProfile,
 } from "@/lib/postgres";
 import { LOCAL_TEST_USER_ID } from "@/lib/local-test-auth";
 import { COUNTRY_OPTIONS, PHONE_CODE_OPTIONS, splitInternationalPhone } from "@/lib/country-options";
 
 export async function GET(request: Request) {
-  const userId = await getAuthenticatedUserId(request);
-  if (!userId) return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  const identity = await getAuthenticatedUser(request);
+  if (!identity) return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  const userId = identity.sub;
 
   if (userId === LOCAL_TEST_USER_ID && process.env.NODE_ENV === "development") {
     return NextResponse.json({
@@ -36,36 +35,32 @@ export async function GET(request: Request) {
   }
 
   try {
-    const user = await getAuth0User(userId);
-    const metadata = user.app_metadata || {};
-    const metadataPlan = metadata.plan as PlanKey;
-    const planKey = metadataPlan in plans ? metadataPlan : "free";
-    const plan = plans[planKey];
-    const usageMonth = getCurrentUsageMonth();
-    const [chatData, imageGenerationCount] = await Promise.all([
+    const [account, chatData, imageGenerationCount] = await Promise.all([
+      getUserAccountData(userId),
       getUserChatData(userId),
       getUserDailyImageUsage(userId),
     ]);
+    const planKey = account.planKey in plans ? account.planKey as PlanKey : "free";
+    const plan = plans[planKey];
+    const usageMonth = getCurrentUsageMonth();
     const usageCount = chatData?.usageMonth === usageMonth ? chatData.usageCount : 0;
-    const parsedPhone = splitInternationalPhone(user.phone_number || "");
-    const storedPhoneCountry = typeof user.user_metadata?.phoneCountry === "string"
-      ? user.user_metadata.phoneCountry
-      : "";
+    const parsedPhone = splitInternationalPhone(account.phoneNumber);
     const phoneCountry = PHONE_CODE_OPTIONS.find(
-      (option) => option.code === storedPhoneCountry && option.dialCode === parsedPhone.phoneCountryCode,
+      (option) => option.code === account.phoneCountry && option.dialCode === parsedPhone.phoneCountryCode,
     )?.code || PHONE_CODE_OPTIONS.find((option) => option.dialCode === parsedPhone.phoneCountryCode)?.code || "US";
+    const name = [account.firstName, account.surname].filter(Boolean).join(" ") || identity.name || "";
 
     return NextResponse.json({
-      name: user.name || "",
-      firstName: user.given_name || user.name?.split(" ")[0] || "",
-      surname: user.family_name || user.name?.split(" ").slice(1).join(" ") || "",
-      email: user.email || "",
-      country: typeof user.user_metadata?.country === "string" ? user.user_metadata.country : "",
-      phone: user.phone_number || "",
+      name,
+      firstName: account.firstName || identity.given_name || name.split(" ")[0] || "",
+      surname: account.surname || identity.family_name || name.split(" ").slice(1).join(" ") || "",
+      email: identity.email || "",
+      country: account.country,
+      phone: account.phoneNumber,
       phoneCountryCode: parsedPhone.phoneCountryCode,
       phoneCountry,
       phoneNumber: parsedPhone.phoneNumber,
-      picture: user.picture || "",
+      picture: identity.picture || "",
       plan: plan.name,
       billingInterval: plan.interval,
       usageLimit: plan.usageLimit,
@@ -80,14 +75,14 @@ export async function GET(request: Request) {
 }
 
 export async function PATCH(request: Request) {
-  const userId = await getAuthenticatedUserId(request);
-  if (!userId) return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  const identity = await getAuthenticatedUser(request);
+  if (!identity) return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  const userId = identity.sub;
 
   try {
     const body = await request.json();
     const firstName = typeof body.firstName === "string" ? body.firstName.trim() : "";
     const surname = typeof body.surname === "string" ? body.surname.trim() : "";
-    const name = [firstName, surname].filter(Boolean).join(" ");
     const country = typeof body.country === "string" ? body.country.trim().toUpperCase() : "";
     const phoneCountry = typeof body.phoneCountry === "string" ? body.phoneCountry.trim().toUpperCase() : "US";
     const selectedPhoneCountry = PHONE_CODE_OPTIONS.find((option) => option.code === phoneCountry);
@@ -112,21 +107,14 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: "Enter a valid phone number." }, { status: 400 });
     }
 
-    if (userId === LOCAL_TEST_USER_ID && process.env.NODE_ENV === "development") {
-      return NextResponse.json({ name, firstName, surname, country, phone, phoneCountryCode, phoneCountry, phoneNumber: phoneDigits });
-    }
-
-    const existingUser = await getAuth0User(userId);
-    await updateAuth0Profile(
-      userId,
-      {
-        name,
-        given_name: firstName,
-        family_name: surname,
-        user_metadata: { ...existingUser.user_metadata, country, phoneCountry },
-        ...(phone ? { phone_number: phone } : {}),
-      },
-    );
+    await updateUserAccountProfile(userId, {
+      firstName,
+      surname,
+      country,
+      phoneCountry,
+      phoneNumber: phone,
+    });
+    const name = [firstName, surname].filter(Boolean).join(" ");
     return NextResponse.json({ name, firstName, surname, country, phone, phoneCountryCode, phoneCountry, phoneNumber: phoneDigits });
   } catch (error) {
     console.error("Account profile update error:", error);

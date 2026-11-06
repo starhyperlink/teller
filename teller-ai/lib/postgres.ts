@@ -6,6 +6,15 @@ type UserChatData = {
   usageCount: number;
 };
 
+export type UserAccountData = {
+  planKey: string;
+  firstName: string;
+  surname: string;
+  country: string;
+  phoneCountry: string;
+  phoneNumber: string;
+};
+
 export type GoogleConnectionRecord = {
   email: string;
   encryptedTokens: string;
@@ -60,6 +69,18 @@ async function ensureSchema() {
           usage_count INTEGER NOT NULL DEFAULT 0 CHECK (usage_count >= 0),
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           PRIMARY KEY (user_id, usage_date)
+        )
+      `);
+      await getPool().query(`
+        CREATE TABLE IF NOT EXISTS teller_user_accounts (
+          user_id TEXT PRIMARY KEY,
+          plan_key TEXT NOT NULL DEFAULT 'free',
+          first_name TEXT NOT NULL DEFAULT '',
+          surname TEXT NOT NULL DEFAULT '',
+          country TEXT NOT NULL DEFAULT '',
+          phone_country TEXT NOT NULL DEFAULT '',
+          phone_number TEXT NOT NULL DEFAULT '',
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
       `);
       await getPool().query(`
@@ -177,6 +198,80 @@ function currentUsageMonth() {
 
 export function getCurrentUsageDate() {
   return new Date().toISOString().slice(0, 10);
+}
+
+export async function getUserAccountData(userId: string): Promise<UserAccountData> {
+  await ensureSchema();
+  const result = await getPool().query<{
+    plan_key: string;
+    first_name: string;
+    surname: string;
+    country: string;
+    phone_country: string;
+    phone_number: string;
+  }>(
+    `
+      SELECT plan_key, first_name, surname, country, phone_country, phone_number
+      FROM teller_user_accounts
+      WHERE user_id = $1
+    `,
+    [userId],
+  );
+  const row = result.rows[0];
+  return row
+    ? {
+        planKey: row.plan_key,
+        firstName: row.first_name,
+        surname: row.surname,
+        country: row.country,
+        phoneCountry: row.phone_country,
+        phoneNumber: row.phone_number,
+      }
+    : {
+        planKey: "free",
+        firstName: "",
+        surname: "",
+        country: "",
+        phoneCountry: "",
+        phoneNumber: "",
+      };
+}
+
+export async function updateUserAccountProfile(
+  userId: string,
+  profile: Pick<UserAccountData, "firstName" | "surname" | "country" | "phoneCountry" | "phoneNumber">,
+) {
+  await ensureSchema();
+  await getPool().query(
+    `
+      INSERT INTO teller_user_accounts (
+        user_id, first_name, surname, country, phone_country, phone_number, updated_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, NOW())
+      ON CONFLICT (user_id) DO UPDATE SET
+        first_name = EXCLUDED.first_name,
+        surname = EXCLUDED.surname,
+        country = EXCLUDED.country,
+        phone_country = EXCLUDED.phone_country,
+        phone_number = EXCLUDED.phone_number,
+        updated_at = NOW()
+    `,
+    [userId, profile.firstName, profile.surname, profile.country, profile.phoneCountry, profile.phoneNumber],
+  );
+}
+
+export async function updateUserAccountPlan(userId: string, planKey: string) {
+  await ensureSchema();
+  await getPool().query(
+    `
+      INSERT INTO teller_user_accounts (user_id, plan_key, updated_at)
+      VALUES ($1, $2, NOW())
+      ON CONFLICT (user_id) DO UPDATE SET
+        plan_key = EXCLUDED.plan_key,
+        updated_at = NOW()
+    `,
+    [userId, planKey],
+  );
 }
 
 export async function getUserDailyImageUsage(userId: string, usageDate = getCurrentUsageDate()) {

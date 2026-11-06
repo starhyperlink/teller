@@ -4,14 +4,14 @@ import {
   isCloudflareImageGenerationConfigured,
 } from "@/lib/cloudflare-image";
 import { MAX_IMAGE_BYTES, parseImageDataUrl } from "@/lib/image-input";
-import { getAuth0User, getAuthenticatedUserId } from "@/lib/auth0-management";
-import { LOCAL_TEST_USER_ID } from "@/lib/local-test-auth";
+import { getAuthenticatedUserId } from "@/lib/auth0-auth";
 import {
   getCurrentUsageDate,
   getUserGeneratedImage,
   releaseUserDailyImageGeneration,
   reserveUserDailyImageGeneration,
   saveUserChatMedia,
+  getUserAccountData,
 } from "@/lib/postgres";
 import { analyzeImageWithNvidia } from "@/lib/openrouter-image";
 import { getPlanKey, plans } from "@/lib/plans";
@@ -104,22 +104,8 @@ export async function POST(request: Request) {
       );
     }
 
-    let user: Awaited<ReturnType<typeof getAuth0User>> | null = null;
-    if (!(userId === LOCAL_TEST_USER_ID && process.env.NODE_ENV === "development")) {
-      try {
-        user = await getAuth0User(userId);
-      } catch (error) {
-        console.error("Image generation plan lookup failed:", error);
-        return NextResponse.json(
-          {
-            error: "Image generation could not verify your plan with Auth0. Check the server-side Auth0 Management API configuration and try again.",
-            code: "AUTH0_MANAGEMENT_API_UNAVAILABLE",
-          },
-          { status: 503 },
-        );
-      }
-    }
-    const planKey = getPlanKey(user?.app_metadata?.plan) || "free";
+    const account = await getUserAccountData(userId);
+    const planKey = getPlanKey(account.planKey) || "free";
     const plan = plans[planKey];
     const usageDate = getCurrentUsageDate();
     const imageGenerationCount = await reserveUserDailyImageGeneration(

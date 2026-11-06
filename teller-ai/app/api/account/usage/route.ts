@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getAuthenticatedUserId } from "@/lib/auth0-management";
+import { getAuthenticatedUserId } from "@/lib/auth0-auth";
 import { saveUserUsage } from "@/lib/postgres";
 
 export async function POST(request: Request) {

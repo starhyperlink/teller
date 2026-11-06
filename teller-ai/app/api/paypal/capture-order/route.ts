@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { updateAuth0Plan } from "@/lib/auth0-management";
 import { plans, type PlanKey } from "@/lib/plans";
 import { LOCAL_TEST_USER_ID } from "@/lib/local-test-auth";
+import { updateUserAccountPlan } from "@/lib/postgres";
 
 const paypalBaseUrl =
   process.env.PAYPAL_ENVIRONMENT === "production"
@@ -70,16 +70,7 @@ export async function GET(request: Request) {
       throw new Error("PayPal payment capture failed.");
     }
 
-    const plan = plans[payment.plan];
-    await updateAuth0Plan(payment.userId, {
-      plan: payment.plan,
-      billing_interval: plan.interval,
-      usage_limit: plan.usageLimit,
-      usage_count: 0,
-      usage_month: `${new Date().getUTCFullYear()}-${String(new Date().getUTCMonth() + 1).padStart(2, "0")}`,
-      plan_updated_at: new Date().toISOString(),
-      paypal_order_id: orderId,
-    });
+    await updateUserAccountPlan(payment.userId, payment.plan);
 
     return NextResponse.redirect(`${appUrl}/chat?paypal=success`);
   } catch (error) {

@@ -6,8 +6,8 @@ import {
 } from "@/lib/ai";
 import { hasChatAIProvider } from "@/lib/ai-router";
 import { analyzeImageWithNvidia } from "@/lib/openrouter-image";
-import { getAuth0User, getAuthenticatedUserId } from "@/lib/auth0-management";
-import { getUserGeneratedImage, incrementUserUsage } from "@/lib/postgres";
+import { getAuthenticatedUserId } from "@/lib/auth0-auth";
+import { getUserAccountData, getUserGeneratedImage, incrementUserUsage } from "@/lib/postgres";
 import { LOCAL_TEST_USER_ID } from "@/lib/local-test-auth";
 import { COUNTRY_OPTIONS } from "@/lib/country-options";
 import { MAX_IMAGE_BYTES, parseImageDataUrl } from "@/lib/image-input";
@@ -83,11 +83,8 @@ export async function POST(req: Request) {
     let country: string | undefined;
     if (userId && userId !== LOCAL_TEST_USER_ID) {
       try {
-        const profile = await getAuth0User(userId);
-        const countryCode = profile.user_metadata?.country;
-        if (typeof countryCode === "string") {
-          country = COUNTRY_OPTIONS.find((option) => option.code === countryCode)?.name;
-        }
+        const profile = await getUserAccountData(userId);
+        country = COUNTRY_OPTIONS.find((option) => option.code === profile.country)?.name;
       } catch (error) {
         console.error("Could not load country context for chat:", error);
       }
