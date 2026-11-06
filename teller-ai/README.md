@@ -24,6 +24,8 @@ Text chat, conversation titles, and CyberAgent try NVIDIA's Nemotron 3.5 Bolt E4
 
 Image generation uses Cloudflare Workers AI's `@cf/black-forest-labs/flux-2-klein-4b` model by default. Set the server-only `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` values; the token needs Workers AI Read and Edit permissions. `IMAGE_GENERATION_MODEL` can override the model. Generated images default to 1024 × 1024. The app uses the configured NVIDIA vision model to caption generated images and answer follow-up questions about them; keep `NVIDIA_API_KEY` configured for those features. Users can request edits in the same conversation, and the app uses the latest generated image as the reference. JPEG, PNG, and WebP uploads up to 3 MB are analyzed when the prompt asks a question and used as reference images when the prompt asks for an edit. Reference images are resized to fit within 511 × 511 pixels for FLUX.2 Klein.
 
+Daily image-generation limits are 5 for Free, 25 for Pro, and 30 for Business plans. Limits reset at midnight UTC. When the daily limit is reached, the chat reports that image generation is unavailable until tomorrow.
+
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
 ## CyberAgent: Gmail and Calendar

@@ -54,6 +54,15 @@ async function ensureSchema() {
         )
       `);
       await getPool().query(`
+        CREATE TABLE IF NOT EXISTS teller_user_daily_image_usage (
+          user_id TEXT NOT NULL,
+          usage_date DATE NOT NULL,
+          usage_count INTEGER NOT NULL DEFAULT 0 CHECK (usage_count >= 0),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (user_id, usage_date)
+        )
+      `);
+      await getPool().query(`
         CREATE INDEX IF NOT EXISTS teller_chat_media_user_history_idx
         ON teller_chat_media (user_id, history_id)
       `);
@@ -164,6 +173,52 @@ export async function consumeGooglePendingAction(userId: string, id: string) {
 function currentUsageMonth() {
   const now = new Date();
   return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+export function getCurrentUsageDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+export async function getUserDailyImageUsage(userId: string, usageDate = getCurrentUsageDate()) {
+  await ensureSchema();
+  const result = await getPool().query<{ usage_count: number }>(
+    "SELECT usage_count FROM teller_user_daily_image_usage WHERE user_id = $1 AND usage_date = $2",
+    [userId, usageDate],
+  );
+  return result.rows[0]?.usage_count ?? 0;
+}
+
+export async function reserveUserDailyImageGeneration(
+  userId: string,
+  limit: number,
+  usageDate = getCurrentUsageDate(),
+) {
+  await ensureSchema();
+  const result = await getPool().query<{ usage_count: number }>(
+    `
+      INSERT INTO teller_user_daily_image_usage (user_id, usage_date, usage_count, updated_at)
+      VALUES ($1, $2, 1, NOW())
+      ON CONFLICT (user_id, usage_date) DO UPDATE SET
+        usage_count = teller_user_daily_image_usage.usage_count + 1,
+        updated_at = NOW()
+      WHERE teller_user_daily_image_usage.usage_count < $3
+      RETURNING usage_count
+    `,
+    [userId, usageDate, limit],
+  );
+  return result.rows[0]?.usage_count ?? null;
+}
+
+export async function releaseUserDailyImageGeneration(userId: string, usageDate: string) {
+  await ensureSchema();
+  await getPool().query(
+    `
+      UPDATE teller_user_daily_image_usage
+      SET usage_count = GREATEST(usage_count - 1, 0), updated_at = NOW()
+      WHERE user_id = $1 AND usage_date = $2
+    `,
+    [userId, usageDate],
+  );
 }
 
 export async function getUserChatData(userId: string): Promise<UserChatData | null> {

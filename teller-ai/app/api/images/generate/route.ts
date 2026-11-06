@@ -4,11 +4,25 @@ import {
   isCloudflareImageGenerationConfigured,
 } from "@/lib/cloudflare-image";
 import { MAX_IMAGE_BYTES, parseImageDataUrl } from "@/lib/image-input";
-import { getAuthenticatedUserId } from "@/lib/auth0-management";
-import { getUserGeneratedImage, saveUserChatMedia } from "@/lib/postgres";
+import { getAuth0User, getAuthenticatedUserId } from "@/lib/auth0-management";
+import { LOCAL_TEST_USER_ID } from "@/lib/local-test-auth";
+import {
+  getCurrentUsageDate,
+  getUserGeneratedImage,
+  releaseUserDailyImageGeneration,
+  reserveUserDailyImageGeneration,
+  saveUserChatMedia,
+} from "@/lib/postgres";
 import { analyzeImageWithNvidia } from "@/lib/openrouter-image";
+import { getPlanKey, plans } from "@/lib/plans";
 
 export const runtime = "nodejs";
+
+function getNextDailyReset() {
+  const nextReset = new Date();
+  nextReset.setUTCHours(24, 0, 0, 0);
+  return nextReset.toISOString();
+}
 
 const resolutions = new Set([
   "1024x1024 ( 1:1 )",
@@ -23,6 +37,7 @@ const resolutions = new Set([
 ]);
 
 export async function POST(request: Request) {
+  let imageReservation: { userId: string; usageDate: string } | null = null;
   try {
     const userId = await getAuthenticatedUserId(request);
     if (!userId) {
@@ -89,6 +104,37 @@ export async function POST(request: Request) {
       );
     }
 
+    const user = userId === LOCAL_TEST_USER_ID && process.env.NODE_ENV === "development"
+      ? null
+      : await getAuth0User(userId);
+    const planKey = getPlanKey(user?.app_metadata?.plan) || "free";
+    const plan = plans[planKey];
+    const usageDate = getCurrentUsageDate();
+    const imageGenerationCount = await reserveUserDailyImageGeneration(
+      userId,
+      plan.imageGenerationLimit,
+      usageDate,
+    );
+    if (imageGenerationCount === null) {
+      const upgradeText = planKey === "free"
+        ? " Upgrade to Pro for 25 images per day."
+        : planKey === "pro-monthly" || planKey === "pro-yearly"
+          ? " Business includes 30 images per day."
+          : "";
+      return NextResponse.json(
+        {
+          error: `You’ve reached your ${plan.name} plan limit of ${plan.imageGenerationLimit} images for today. Please try again tomorrow.${upgradeText}`,
+          code: "DAILY_IMAGE_LIMIT_REACHED",
+          plan: plan.name,
+          imageGenerationLimit: plan.imageGenerationLimit,
+          imageGenerationCount: plan.imageGenerationLimit,
+          resetsAt: getNextDailyReset(),
+        },
+        { status: 429 },
+      );
+    }
+    imageReservation = { userId, usageDate };
+
     const image = await generateImageWithCloudflare(
       prompt,
       resolution,
@@ -98,10 +144,7 @@ export async function POST(request: Request) {
     );
     const dataUrl = image.imageUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,([\s\S]+)$/);
     if (!dataUrl) {
-      return NextResponse.json(
-        { error: "The image provider returned an image format that cannot be stored." },
-        { status: 502 },
-      );
+      throw new Error("The image provider returned an image format that cannot be stored.");
     }
 
     const imageBytes = Buffer.from(dataUrl[2], "base64");
@@ -116,14 +159,24 @@ export async function POST(request: Request) {
       dataUrl[1],
       imageBytes,
     );
+    imageReservation = null;
     return NextResponse.json({
       imageUrl: `data:${dataUrl[1]};base64,${imageBytes.toString("base64")}`,
       imageStoragePath: `postgres:${mediaId}`,
       prompt: image.prompt,
       imageDescription: imageDescription.slice(0, 600),
+      imageGenerationCount,
+      imageGenerationLimit: plan.imageGenerationLimit,
     });
   } catch (error) {
     console.error("Image generation API error:", error);
+    if (imageReservation) {
+      try {
+        await releaseUserDailyImageGeneration(imageReservation.userId, imageReservation.usageDate);
+      } catch (releaseError) {
+        console.error("Could not release failed image generation reservation:", releaseError);
+      }
+    }
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Image generation failed." },
       { status: 502 },

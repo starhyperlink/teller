@@ -394,6 +394,8 @@ export default function ChatWindow() {
   const [monthlyChatCount, setMonthlyChatCount] = useState(0);
   const [planName, setPlanName] = useState("Free");
   const [usageLimit, setUsageLimit] = useState(100);
+  const [dailyImageCount, setDailyImageCount] = useState(0);
+  const [dailyImageLimit, setDailyImageLimit] = useState(5);
   const [googleConnection, setGoogleConnection] = useState<GoogleConnectionStatus | null>(null);
   const [googleConnectionError, setGoogleConnectionError] = useState("");
   const [googleConnectionNotice, setGoogleConnectionNotice] = useState("");
@@ -560,6 +562,12 @@ export default function ChatWindow() {
         if (!account) return;
         setPlanName(account.plan);
         setUsageLimit(account.usageLimit);
+        if (Number.isInteger(account.imageGenerationLimit)) {
+          setDailyImageLimit(account.imageGenerationLimit);
+        }
+        if (Number.isInteger(account.imageGenerationCount)) {
+          setDailyImageCount(account.imageGenerationCount);
+        }
         if (Number.isInteger(account.usageCount)) {
           setMonthlyChatCount(account.usageCount);
         }
@@ -877,7 +885,15 @@ export default function ChatWindow() {
         });
         const imageData = await imageResponse.json();
         if (!imageResponse.ok) {
+          if (imageData.code === "DAILY_IMAGE_LIMIT_REACHED") {
+            setDailyImageCount(imageData.imageGenerationCount);
+          }
           throw new Error(imageData.error || "Image generation failed.");
+        }
+        if (Number.isInteger(imageData.imageGenerationCount)) {
+          setDailyImageCount(imageData.imageGenerationCount);
+        } else {
+          setDailyImageCount((count) => count + 1);
         }
 
         const assistantMessage: Message = {
@@ -1422,6 +1438,9 @@ export default function ChatWindow() {
             {hasSession && (
               <div className="mt-3 px-3 text-xs text-neutral-400">
                 {planName} plan: {monthlyChatCount}/{usageLimit} chats this month
+                <span className="mt-1 block">
+                  {dailyImageCount}/{dailyImageLimit} images today
+                </span>
               </div>
             )}
           </div>

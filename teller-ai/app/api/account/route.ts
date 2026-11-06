@@ -5,7 +5,11 @@ import {
   updateAuth0Profile,
 } from "@/lib/auth0-management";
 import { plans, type PlanKey } from "@/lib/plans";
-import { getCurrentUsageMonth, getUserChatData } from "@/lib/postgres";
+import {
+  getCurrentUsageMonth,
+  getUserChatData,
+  getUserDailyImageUsage,
+} from "@/lib/postgres";
 import { LOCAL_TEST_USER_ID } from "@/lib/local-test-auth";
 import { COUNTRY_OPTIONS, PHONE_CODE_OPTIONS, splitInternationalPhone } from "@/lib/country-options";
 
@@ -26,6 +30,8 @@ export async function GET(request: Request) {
       billingInterval: plans.free.interval,
       usageLimit: plans.free.usageLimit,
       usageCount: 0,
+      imageGenerationLimit: plans.free.imageGenerationLimit,
+      imageGenerationCount: 0,
     });
   }
 
@@ -36,7 +42,10 @@ export async function GET(request: Request) {
     const planKey = metadataPlan in plans ? metadataPlan : "free";
     const plan = plans[planKey];
     const usageMonth = getCurrentUsageMonth();
-    const chatData = await getUserChatData(userId);
+    const [chatData, imageGenerationCount] = await Promise.all([
+      getUserChatData(userId),
+      getUserDailyImageUsage(userId),
+    ]);
     const usageCount = chatData?.usageMonth === usageMonth ? chatData.usageCount : 0;
     const parsedPhone = splitInternationalPhone(user.phone_number || "");
     const storedPhoneCountry = typeof user.user_metadata?.phoneCountry === "string"
@@ -61,6 +70,8 @@ export async function GET(request: Request) {
       billingInterval: plan.interval,
       usageLimit: plan.usageLimit,
       usageCount,
+      imageGenerationLimit: plan.imageGenerationLimit,
+      imageGenerationCount,
     });
   } catch (error) {
     console.error("Account API error:", error);

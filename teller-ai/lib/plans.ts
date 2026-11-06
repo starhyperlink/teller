@@ -5,12 +5,17 @@ export type PlanKey =
   | "pro-yearly"
   | "business-yearly";
 
-export const plans: Record<PlanKey, { name: string; interval: string; usageLimit: number }> = {
-  free: { name: "Free", interval: "monthly", usageLimit: 100 },
-  "pro-monthly": { name: "Pro", interval: "monthly", usageLimit: 1000 },
-  "business-monthly": { name: "Business", interval: "monthly", usageLimit: 5000 },
-  "pro-yearly": { name: "Pro", interval: "yearly", usageLimit: 1000 },
-  "business-yearly": { name: "Business", interval: "yearly", usageLimit: 5000 },
+export const plans: Record<PlanKey, {
+  name: string;
+  interval: string;
+  usageLimit: number;
+  imageGenerationLimit: number;
+}> = {
+  free: { name: "Free", interval: "monthly", usageLimit: 100, imageGenerationLimit: 5 },
+  "pro-monthly": { name: "Pro", interval: "monthly", usageLimit: 1000, imageGenerationLimit: 25 },
+  "business-monthly": { name: "Business", interval: "monthly", usageLimit: 5000, imageGenerationLimit: 30 },
+  "pro-yearly": { name: "Pro", interval: "yearly", usageLimit: 1000, imageGenerationLimit: 25 },
+  "business-yearly": { name: "Business", interval: "yearly", usageLimit: 5000, imageGenerationLimit: 30 },
 };
 
 export function getPlanKey(value: unknown): PlanKey | null {
