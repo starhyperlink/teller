@@ -104,9 +104,21 @@ export async function POST(request: Request) {
       );
     }
 
-    const user = userId === LOCAL_TEST_USER_ID && process.env.NODE_ENV === "development"
-      ? null
-      : await getAuth0User(userId);
+    let user: Awaited<ReturnType<typeof getAuth0User>> | null = null;
+    if (!(userId === LOCAL_TEST_USER_ID && process.env.NODE_ENV === "development")) {
+      try {
+        user = await getAuth0User(userId);
+      } catch (error) {
+        console.error("Image generation plan lookup failed:", error);
+        return NextResponse.json(
+          {
+            error: "Image generation could not verify your plan with Auth0. Check the server-side Auth0 Management API configuration and try again.",
+            code: "AUTH0_MANAGEMENT_API_UNAVAILABLE",
+          },
+          { status: 503 },
+        );
+      }
+    }
     const planKey = getPlanKey(user?.app_metadata?.plan) || "free";
     const plan = plans[planKey];
     const usageDate = getCurrentUsageDate();

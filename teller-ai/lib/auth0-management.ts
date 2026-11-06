@@ -11,7 +11,9 @@ function getManagementApiUrl(path: string) {
 
 async function getManagementToken() {
   if (!auth0Domain || !process.env.AUTH0_CLIENT_ID || !process.env.AUTH0_CLIENT_SECRET) {
-    throw new Error("Auth0 Management API is not configured.");
+    throw new Error(
+      "Auth0 Management API is not configured. Set AUTH0_CLIENT_ID and AUTH0_CLIENT_SECRET for a server-side Machine-to-Machine application.",
+    );
   }
 
   const response = await fetch(`https://${auth0Domain}/oauth/token`, {
@@ -25,9 +27,26 @@ async function getManagementToken() {
     }),
   });
 
-  if (!response.ok) throw new Error("Auth0 Management API authentication failed.");
-  const result = await response.json();
-  return result.access_token as string;
+  let result: { access_token?: unknown; error?: unknown; error_description?: unknown };
+  try {
+    result = await response.json();
+  } catch {
+    throw new Error(`Auth0 Management API token request failed (${response.status}) with an invalid response.`);
+  }
+  if (!response.ok) {
+    const reason = typeof result.error_description === "string"
+      ? result.error_description
+      : typeof result.error === "string"
+        ? result.error
+        : "Auth0 rejected the client credentials.";
+    throw new Error(
+      `Auth0 Management API authentication failed (${response.status}): ${reason} Check the server-side AUTH0_CLIENT_ID and AUTH0_CLIENT_SECRET and authorize the Machine-to-Machine application for the Auth0 Management API.`,
+    );
+  }
+  if (typeof result.access_token !== "string") {
+    throw new Error("Auth0 Management API token response did not contain an access token.");
+  }
+  return result.access_token;
 }
 
 export async function getAuth0User(userId: string) {
