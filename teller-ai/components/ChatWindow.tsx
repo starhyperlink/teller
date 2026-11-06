@@ -940,7 +940,7 @@ export default function ChatWindow() {
             return {
               role: msg.role,
               content: msg.imageDescription
-                ? `${msg.content}\n[Generated image description: ${msg.imageDescription}]`
+                ? `${msg.content}\nVisual details of the image: ${msg.imageDescription}`
                 : msg.content,
               ...(shouldAskAboutGeneratedImage && index === updatedMessages.length - 1
                 ? { imageStoragePath: previousGeneratedImage?.imageStoragePath }
