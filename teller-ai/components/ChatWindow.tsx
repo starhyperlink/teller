@@ -27,6 +27,7 @@ type Message = {
   pendingAction?: CyberPendingAction;
   imageUrl?: string;
   imageStoragePath?: string;
+  imageDescription?: string;
   file?: {
     name: string;
     type: string;
@@ -173,7 +174,14 @@ function isImageGenerationPrompt(prompt: string) {
 function isImageModificationPrompt(prompt: string) {
   return /^\s*(?:(?:please|can you|could you|would you)\s+)*(?:edit|modify|change|alter|transform|turn|convert|restyle|redesign|enhance|retouch|recolor|colorize|crop|add|remove|replace|erase|blur)\b/i.test(prompt) ||
     /^\s*(?:(?:please|can you|could you|would you)\s+)*(?:make|create|generate|draw|design)\s+(?:it|this|the image|the photo|the picture|an? (?:new )?(?:image|photo|picture))\b/i.test(prompt) ||
-    /\b(?:make|create|generate)\s+(?:it|this|the image|the photo|the picture|an? (?:new )?(?:image|photo|picture))\b/i.test(prompt);
+    /\b(?:make|create|generate)\s+(?:it|this|the image|the photo|the picture|an? (?:new )?(?:image|photo|picture))\b/i.test(prompt) ||
+    /^\s*(?:(?:please|can you|could you|would you)\s+)*(?:make|keep)\s+(?:it|this|that)\s+\w+/i.test(prompt) ||
+    /^\s*(?:(?:please|can you|could you|would you)\s+)*(?:make|change|turn)\s+(?:the|its|their)\s+(?:background|sky|lighting|colors?|colours?|clothing|outfit|subject|character|style|composition)\b/i.test(prompt) ||
+    /^\s*(?:(?:please|can you|could you|would you)\s+)*(?:make|create|generate)\s+(?:another|a different|a new version|a variation)\b/i.test(prompt);
+}
+
+function isImageReferencePrompt(prompt: string) {
+  return /\b(?:it|this|that|there|describe|analyze|analyse|explain|image|picture|photo|artwork|illustration|scene|subject|character|background|foreground|color|colour|object|person|people|animal|sky|clothing|hat)\b/i.test(prompt);
 }
 
 function normalizeMathExpression(expression: string) {
@@ -833,9 +841,22 @@ export default function ChatWindow() {
       }
 
       const hasImageUpload = Boolean(pendingFile?.type.startsWith("image/"));
+      const previousGeneratedImage = !pendingFile
+        ? updatedMessages.slice(0, -1).reverse().find((message) => (
+            message.role === "assistant" &&
+            Boolean(message.imageUrl) &&
+            message.imageStoragePath?.startsWith("postgres:")
+          ))
+        : undefined;
+      const shouldEditGeneratedImage = Boolean(
+        previousGeneratedImage && isImageModificationPrompt(userMessage.content),
+      );
       const shouldGenerateImage = hasImageUpload
         ? isImageModificationPrompt(userMessage.content)
-        : !pendingFile && isImageGenerationPrompt(userMessage.content);
+        : !pendingFile && (
+            isImageGenerationPrompt(userMessage.content) ||
+            shouldEditGeneratedImage
+          );
 
       if (shouldGenerateImage) {
         const token = isAuthenticated ? await getAccessTokenSilently() : null;
@@ -849,6 +870,9 @@ export default function ChatWindow() {
             prompt: userMessage.content,
             historyId: activeHistoryId,
             ...(hasImageUpload ? { referenceImage: pendingFile?.dataUrl } : {}),
+            ...(shouldEditGeneratedImage && previousGeneratedImage
+              ? { referenceImageStoragePath: previousGeneratedImage.imageStoragePath }
+              : {}),
           }),
         });
         const imageData = await imageResponse.json();
@@ -861,6 +885,7 @@ export default function ChatWindow() {
           content: "Here’s the image you asked for.",
           imageUrl: imageData.imageUrl,
           imageStoragePath: imageData.imageStoragePath,
+          imageDescription: imageData.imageDescription,
         };
         setMessages([...updatedMessages, assistantMessage]);
         if (activeHistoryId) {
@@ -874,6 +899,11 @@ export default function ChatWindow() {
       }
 
       const token = isAuthenticated ? await getAccessTokenSilently() : null;
+      const shouldAskAboutGeneratedImage = Boolean(
+        previousGeneratedImage &&
+        !shouldGenerateImage &&
+        isImageReferencePrompt(userMessage.content),
+      );
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: {
@@ -882,7 +912,7 @@ export default function ChatWindow() {
         },
         body: JSON.stringify({
           agent: activeAgent,
-          messages: updatedMessages.map((msg) => {
+          messages: updatedMessages.map((msg, index) => {
             const isCurrentImage = msg === userMessage && msg.file?.type.startsWith("image/");
             if (msg.file) {
               return {
@@ -891,7 +921,15 @@ export default function ChatWindow() {
                 ...(isCurrentImage ? { imageUrl: msg.file.dataUrl } : {}),
               };
             }
-            return { role: msg.role, content: msg.content };
+            return {
+              role: msg.role,
+              content: msg.imageDescription
+                ? `${msg.content}\n[Generated image description: ${msg.imageDescription}]`
+                : msg.content,
+              ...(shouldAskAboutGeneratedImage && index === updatedMessages.length - 1
+                ? { imageStoragePath: previousGeneratedImage?.imageStoragePath }
+                : {}),
+            };
           }),
         }),
       });
@@ -1690,11 +1728,18 @@ export default function ChatWindow() {
                   <FormattedMessage content={message.content} showCodeCopy={message.role === "assistant"} onCopyCode={(code) => void copyText(code, index)} />
                 </div>
                 {message.imageUrl && (
-                  <img
-                    src={message.imageUrl}
-                    alt="Generated from your prompt"
-                    className="mt-3 max-h-[min(70vh,640px)] max-w-full rounded-md object-contain"
-                  />
+                  <>
+                    <img
+                      src={message.imageUrl}
+                      alt={message.imageDescription || "Generated image"}
+                      className="mt-3 max-h-[min(70vh,640px)] max-w-full rounded-md object-contain"
+                    />
+                    {message.imageDescription && (
+                      <p className="mt-2 text-sm leading-6 text-neutral-300">
+                        {message.imageDescription}
+                      </p>
+                    )}
+                  </>
                 )}
                 <div className="mt-3 flex gap-2 border-t border-white/10 pt-2 opacity-70">
                   {message.role === "assistant" ? (

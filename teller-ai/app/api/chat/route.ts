@@ -7,10 +7,11 @@ import {
 import { hasChatAIProvider } from "@/lib/ai-router";
 import { analyzeImageWithNvidia } from "@/lib/openrouter-image";
 import { getAuth0User, getAuthenticatedUserId } from "@/lib/auth0-management";
-import { incrementUserUsage } from "@/lib/postgres";
+import { getUserGeneratedImage, incrementUserUsage } from "@/lib/postgres";
 import { LOCAL_TEST_USER_ID } from "@/lib/local-test-auth";
 import { COUNTRY_OPTIONS } from "@/lib/country-options";
 import { MAX_IMAGE_BYTES, parseImageDataUrl } from "@/lib/image-input";
+import { prepareImageForAnalysis } from "@/lib/cloudflare-image";
 
 export const runtime = "nodejs";
 
@@ -29,8 +30,10 @@ export async function POST(req: Request) {
     }
 
     const latestMessage = messages[messages.length - 1];
-    const hasImage = typeof latestMessage?.imageUrl === "string";
-    const encodedImage = hasImage
+    const hasInlineImage = typeof latestMessage?.imageUrl === "string";
+    const hasStoredImage = typeof latestMessage?.imageStoragePath === "string";
+    const hasImage = hasInlineImage || hasStoredImage;
+    const encodedImage = hasInlineImage
       ? latestMessage.imageUrl.match(/^data:image\/[^;,]+;base64,([\s\S]*)$/i)
       : null;
     if (encodedImage && encodedImage[1].length > (MAX_IMAGE_BYTES * 4) / 3) {
@@ -39,11 +42,14 @@ export async function POST(req: Request) {
         { status: 413 },
       );
     }
-    if (hasImage && !parseImageDataUrl(latestMessage.imageUrl)) {
+    if (hasInlineImage && !parseImageDataUrl(latestMessage.imageUrl)) {
       return NextResponse.json(
         { error: "Upload a valid JPEG, PNG, or WebP image under 3 MB." },
         { status: 400 },
       );
+    }
+    if (hasStoredImage && (!/^postgres:[0-9a-f-]{36}$/i.test(latestMessage.imageStoragePath) || hasInlineImage)) {
+      return NextResponse.json({ error: "The generated image reference is invalid." }, { status: 400 });
     }
     if (hasImage && typeof latestMessage.content !== "string") {
       return NextResponse.json({ error: "Add a question about the uploaded image." }, { status: 400 });
@@ -59,6 +65,21 @@ export async function POST(req: Request) {
       );
     }
 
+    let imageDataUrl: string | null = hasInlineImage ? latestMessage.imageUrl : null;
+    if (hasStoredImage) {
+      if (!userId) {
+        return NextResponse.json({ error: "Log in to ask about generated images." }, { status: 401 });
+      }
+      const mediaId = latestMessage.imageStoragePath.slice("postgres:".length);
+      const generatedImage = await getUserGeneratedImage(userId, mediaId);
+      if (!generatedImage) {
+        return NextResponse.json({ error: "The generated image could not be found." }, { status: 404 });
+      }
+      if (!/^image\/(?:jpeg|png|webp)$/i.test(generatedImage.contentType)) {
+        return NextResponse.json({ error: "The generated image format is not supported." }, { status: 400 });
+      }
+      imageDataUrl = await prepareImageForAnalysis(generatedImage.mediaData);
+    }
     let country: string | undefined;
     if (userId && userId !== LOCAL_TEST_USER_ID) {
       try {
@@ -75,8 +96,21 @@ export async function POST(req: Request) {
     let reply: string | null = null;
     let lastCreditError: unknown;
     if (hasImage) {
+      if (!imageDataUrl) {
+        return NextResponse.json({ error: "The image could not be prepared for analysis." }, { status: 400 });
+      }
       try {
-        reply = await analyzeImageWithNvidia(latestMessage.content, latestMessage.imageUrl, country);
+        const recentContext = messages
+          .slice(-7, -1)
+          .filter((message: { content?: unknown }) => typeof message.content === "string")
+          .map((message: { role?: unknown; content: string }) => (
+            `${message.role === "assistant" ? "Assistant" : "User"}: ${message.content.slice(0, 1000)}`
+          ))
+          .join("\n");
+        const imageQuestion = recentContext
+          ? `Conversation context:\n${recentContext}\n\nQuestion about the current image:\n${latestMessage.content}`
+          : latestMessage.content;
+        reply = await analyzeImageWithNvidia(imageQuestion, imageDataUrl, country);
       } catch (error) {
         console.error("NVIDIA image analysis error:", error);
         return NextResponse.json(

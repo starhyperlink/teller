@@ -54,6 +54,9 @@ function sanitizeHistory(value: unknown[]) {
               return {
                 role: message.role === "user" ? "user" : "assistant",
                 content: typeof message.content === "string" ? message.content.slice(0, 4000) : "",
+                ...(typeof message.imageDescription === "string"
+                  ? { imageDescription: message.imageDescription.slice(0, 600) }
+                  : {}),
                 ...(sanitizedFile ? { file: sanitizedFile } : {}),
                 ...(typeof message.imageStoragePath === "string" && message.imageStoragePath.startsWith("postgres:")
                   ? { imageStoragePath: message.imageStoragePath.slice(0, 100) }

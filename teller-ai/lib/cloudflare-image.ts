@@ -90,6 +90,15 @@ export function isCloudflareImageGenerationConfigured() {
   );
 }
 
+export async function prepareImageForAnalysis(imageBytes: Buffer) {
+  const resizedImage = await sharp(imageBytes)
+    .rotate()
+    .resize({ width: 1024, height: 1024, fit: "inside", withoutEnlargement: true })
+    .jpeg({ quality: 82 })
+    .toBuffer();
+  return `data:image/jpeg;base64,${resizedImage.toString("base64")}`;
+}
+
 export async function generateImageWithCloudflare(
   prompt: string,
   resolution: string,

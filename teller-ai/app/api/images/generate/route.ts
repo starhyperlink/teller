@@ -5,7 +5,8 @@ import {
 } from "@/lib/cloudflare-image";
 import { MAX_IMAGE_BYTES, parseImageDataUrl } from "@/lib/image-input";
 import { getAuthenticatedUserId } from "@/lib/auth0-management";
-import { saveUserChatMedia } from "@/lib/postgres";
+import { getUserGeneratedImage, saveUserChatMedia } from "@/lib/postgres";
+import { analyzeImageWithNvidia } from "@/lib/openrouter-image";
 
 export const runtime = "nodejs";
 
@@ -32,6 +33,7 @@ export async function POST(request: Request) {
     const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
     const resolution = typeof body.resolution === "string" ? body.resolution : "";
     const referenceImage = body.referenceImage;
+    const referenceImageStoragePath = body.referenceImageStoragePath;
 
     if (!prompt || prompt.length > 1500) {
       return NextResponse.json(
@@ -44,6 +46,12 @@ export async function POST(request: Request) {
     }
     if (referenceImage !== undefined && typeof referenceImage !== "string") {
       return NextResponse.json({ error: "The reference image is invalid." }, { status: 400 });
+    }
+    if (referenceImageStoragePath !== undefined && typeof referenceImageStoragePath !== "string") {
+      return NextResponse.json({ error: "The reference image is invalid." }, { status: 400 });
+    }
+    if (referenceImage && referenceImageStoragePath) {
+      return NextResponse.json({ error: "Choose one reference image." }, { status: 400 });
     }
     const parsedReference = referenceImage ? parseImageDataUrl(referenceImage) : null;
     if (referenceImage && !parsedReference) {
@@ -59,6 +67,21 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
+    let storedReference: { bytes: Buffer; mediaType: string } | undefined;
+    if (referenceImageStoragePath) {
+      const mediaId = referenceImageStoragePath.match(/^postgres:([0-9a-f-]{36})$/i)?.[1];
+      if (!mediaId) {
+        return NextResponse.json({ error: "The reference image is invalid." }, { status: 400 });
+      }
+      const media = await getUserGeneratedImage(userId, mediaId);
+      if (!media) {
+        return NextResponse.json({ error: "The generated reference image could not be found." }, { status: 404 });
+      }
+      if (!/^image\/(?:jpeg|png|webp)$/i.test(media.contentType)) {
+        return NextResponse.json({ error: "The generated reference image format is not supported." }, { status: 400 });
+      }
+      storedReference = { bytes: media.mediaData, mediaType: media.contentType };
+    }
     if (!isCloudflareImageGenerationConfigured()) {
       return NextResponse.json(
         { error: "Image generation is not configured on the server." },
@@ -69,7 +92,9 @@ export async function POST(request: Request) {
     const image = await generateImageWithCloudflare(
       prompt,
       resolution,
-      parsedReference ? { bytes: parsedReference.bytes, mediaType: parsedReference.mediaType } : undefined,
+      parsedReference
+        ? { bytes: parsedReference.bytes, mediaType: parsedReference.mediaType }
+        : storedReference,
     );
     const dataUrl = image.imageUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,([\s\S]+)$/);
     if (!dataUrl) {
@@ -80,6 +105,10 @@ export async function POST(request: Request) {
     }
 
     const imageBytes = Buffer.from(dataUrl[2], "base64");
+    const imageDescription = await analyzeImageWithNvidia(
+      "Describe this generated image in one concise, factual sentence of about 15–30 words. Mention its main subject, setting, and notable visual style. Do not mention the image-generation process or speculate.",
+      image.imageUrl,
+    );
     const mediaId = await saveUserChatMedia(
       userId,
       typeof body.historyId === "string" ? body.historyId.slice(0, 100) : "generated",
@@ -91,6 +120,7 @@ export async function POST(request: Request) {
       imageUrl: `data:${dataUrl[1]};base64,${imageBytes.toString("base64")}`,
       imageStoragePath: `postgres:${mediaId}`,
       prompt: image.prompt,
+      imageDescription: imageDescription.slice(0, 600),
     });
   } catch (error) {
     console.error("Image generation API error:", error);
