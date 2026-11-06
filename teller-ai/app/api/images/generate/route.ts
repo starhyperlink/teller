@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { generateImageWithOpenRouter } from "@/lib/openrouter-image";
+import {
+  generateImageWithCloudflare,
+  isCloudflareImageGenerationConfigured,
+} from "@/lib/cloudflare-image";
 import { MAX_IMAGE_BYTES, parseImageDataUrl } from "@/lib/image-input";
 import { getAuthenticatedUserId } from "@/lib/auth0-management";
 import { saveUserChatMedia } from "@/lib/postgres";
@@ -56,14 +59,18 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
-    if (!process.env.OPENROUTER_API_KEY || !process.env.IMAGE_GENERATION_MODEL?.trim()) {
+    if (!isCloudflareImageGenerationConfigured()) {
       return NextResponse.json(
         { error: "Image generation is not configured on the server." },
         { status: 503 },
       );
     }
 
-    const image = await generateImageWithOpenRouter(prompt, resolution, parsedReference?.dataUrl);
+    const image = await generateImageWithCloudflare(
+      prompt,
+      resolution,
+      parsedReference ? { bytes: parsedReference.bytes, mediaType: parsedReference.mediaType } : undefined,
+    );
     const dataUrl = image.imageUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,([\s\S]+)$/);
     if (!dataUrl) {
       return NextResponse.json(
