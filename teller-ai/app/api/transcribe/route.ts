@@ -123,7 +123,7 @@ export async function POST(request: Request) {
     }
     if (/\bplease provide\b/i.test(transcription) && /\b(audio|recording|speech)\b/i.test(transcription)) {
       return NextResponse.json(
-        { error: "The model did not detect the recording. Hold the button while speaking and try again." },
+        { error: "The model did not detect the recording. Tap the microphone, speak, and stop the recording to try again." },
         { status: 422 },
       );
     }

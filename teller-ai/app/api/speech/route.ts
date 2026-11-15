@@ -2,9 +2,8 @@ import { readFile } from "node:fs/promises";
 import { NextResponse } from "next/server";
 import { getAuthenticatedUserId } from "@/lib/auth0-auth";
 import { getNvidiaAIConfig } from "@/lib/nvidia-ai";
-import { synthesizeWithFishAudio } from "@/lib/fish-audio";
+import { synthesizeWithOpenRouter } from "@/lib/openrouter-tts";
 import {
-  getSharedFishReferenceId,
   getSharedVoicePrompt,
   seedSharedVoicePromptIfMissing,
 } from "@/lib/postgres";
@@ -162,10 +161,10 @@ export async function POST(request: Request) {
     }
 
     const nvidiaApiKey = process.env.NVIDIA_API_KEY || process.env.AI_API_KEY;
-    const fishApiKey = process.env.FISH_API_KEY?.trim();
-    if (!nvidiaApiKey && !fishApiKey) {
+    const openRouterApiKey = process.env.OPENROUTER_API_KEY?.trim();
+    if (!nvidiaApiKey && !openRouterApiKey) {
       return NextResponse.json(
-        { error: "Configure NVIDIA_API_KEY or FISH_API_KEY to enable voice generation." },
+        { error: "Configure NVIDIA_API_KEY or OPENROUTER_API_KEY to enable voice generation." },
         { status: 503 },
       );
     }
@@ -235,11 +234,11 @@ export async function POST(request: Request) {
         nvidiaFailureMessage = error instanceof Error
           ? error.message
           : "NVIDIA voice generation failed.";
-        console.error("NVIDIA speech generation failed; trying Fish Audio fallback:", error);
+        console.error("NVIDIA speech generation failed; trying OpenRouter fallback:", error);
       }
     }
 
-    if (!fishApiKey) {
+    if (!openRouterApiKey) {
       return NextResponse.json(
         { error: nvidiaFailureMessage },
         { status: nvidiaFailureStatus },
@@ -247,8 +246,7 @@ export async function POST(request: Request) {
     }
 
     try {
-      const referenceId = await getSharedFishReferenceId();
-      const audio = await synthesizeWithFishAudio(text, fishApiKey, referenceId);
+      const audio = await synthesizeWithOpenRouter(text, openRouterApiKey);
       return new Response(new Blob([Uint8Array.from(audio)], { type: "audio/mpeg" }), {
         headers: {
           "Content-Type": "audio/mpeg",
@@ -256,12 +254,12 @@ export async function POST(request: Request) {
         },
       });
     } catch (error) {
-      console.error("Fish Audio fallback failed:", error);
-      const fishFailureMessage = error instanceof Error
+      console.error("OpenRouter fallback failed:", error);
+      const openRouterFailureMessage = error instanceof Error
         ? error.message
-        : "Fish Audio voice generation failed.";
+        : "OpenRouter voice generation failed.";
       return NextResponse.json(
-        { error: `${nvidiaFailureMessage} Fish Audio fallback failed: ${fishFailureMessage}` },
+        { error: `${nvidiaFailureMessage} OpenRouter fallback failed: ${openRouterFailureMessage}` },
         { status: 502 },
       );
     }

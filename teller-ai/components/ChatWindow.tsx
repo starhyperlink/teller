@@ -391,17 +391,15 @@ export default function ChatWindow() {
 
   const [input, setInput] = useState("");
   const promptInputRef = useRef<HTMLTextAreaElement | null>(null);
-  const [speechPreview, setSpeechPreview] = useState("");
   const [speechError, setSpeechError] = useState("");
   const [isRecording, setIsRecording] = useState(false);
+  const [isStartingRecording, setIsStartingRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [loading, setLoading] = useState(false);
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
-  const holdTimerRef = useRef<number | null>(null);
-  const voicePressActiveRef = useRef(false);
-  const suppressClickRef = useRef(false);
   const isRecordingRef = useRef(false);
+  const isStartingRecordingRef = useRef(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioStreamRef = useRef<MediaStream | null>(null);
   const speechRecognitionRef = useRef<SpeechRecognitionLike | null>(null);
@@ -519,7 +517,7 @@ export default function ChatWindow() {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, loading, speechPreview, isRecording, isTranscribing]);
+  }, [messages, loading]);
 
   useEffect(() => {
     const textarea = promptInputRef.current;
@@ -919,7 +917,6 @@ export default function ChatWindow() {
 
     setMessages(updatedMessages);
     setInput("");
-    setSpeechPreview("");
     setLoading(true);
     setIsModeMenuOpen(false);
     if (activeAgent === "maps") {
@@ -1290,24 +1287,22 @@ export default function ChatWindow() {
   }
 
   async function startVoiceInput() {
+    if (isRecordingRef.current || isStartingRecordingRef.current) return;
     if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
       setSpeechError("Voice recording is not supported in this browser.");
       return;
     }
 
     const typedPrefix = input.trim();
+    isStartingRecordingRef.current = true;
+    setIsStartingRecording(true);
     speechTranscriptRef.current = "";
     setSpeechError("");
-    setSpeechPreview(typedPrefix);
 
     let stream: MediaStream | null = null;
     try {
       const activeStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       stream = activeStream;
-      if (!voicePressActiveRef.current) {
-        activeStream.getTracks().forEach((track) => track.stop());
-        return;
-      }
 
       const supportedMimeType = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"]
         .find((mimeType) => MediaRecorder.isTypeSupported(mimeType));
@@ -1339,20 +1334,19 @@ export default function ChatWindow() {
             transcript += event.results[index][0].transcript;
           }
           speechTranscriptRef.current = transcript.trim();
-          setSpeechPreview([typedPrefix, transcript.trim()].filter(Boolean).join(" "));
         };
         recognition.onerror = () => {
-          setSpeechError("Live captions stopped. The recording will still be transcribed when you release.");
+          setSpeechError("Live captions are unavailable; the recording will still be transcribed.");
         };
         speechRecognitionRef.current = recognition;
         try {
           recognition.start();
         } catch {
           speechRecognitionRef.current = null;
-          setSpeechError("Live captions are unavailable; the recording will be transcribed when you release.");
+          setSpeechError("Live captions are unavailable; the recording will still be transcribed when you stop.");
         }
       } else {
-        setSpeechError("Live captions are unavailable; the recording will be transcribed when you release.");
+        setSpeechError("Live captions are unavailable; the recording will still be transcribed when you stop.");
       }
 
       recorder.onstop = async () => {
@@ -1364,16 +1358,16 @@ export default function ChatWindow() {
         mediaRecorderRef.current = null;
         audioStreamRef.current = null;
         speechRecognitionRef.current = null;
+        isRecordingRef.current = false;
+        setIsRecording(false);
 
         if (!chunks.length) {
           setIsTranscribing(false);
-          setSpeechPreview("");
-          setSpeechError("No audio was recorded. Hold the button while speaking and try again.");
+          setSpeechError("No audio was recorded. Tap the microphone and speak before stopping the recording.");
           return;
         }
 
         setIsTranscribing(true);
-        setSpeechPreview((preview) => preview || "Transcribing audio...");
         try {
           const wavRecording = encodeAudioChunksToWav(chunks, context.sampleRate);
           const token = await getAccessTokenSilently();
@@ -1395,7 +1389,6 @@ export default function ChatWindow() {
           void sendMessage(prompt);
         } catch (error) {
           setIsTranscribing(false);
-          setSpeechPreview("");
           const liveTranscript = speechTranscriptRef.current.trim();
           if (liveTranscript) {
             setSpeechError("");
@@ -1409,47 +1402,35 @@ export default function ChatWindow() {
 
       recorder.start();
       isRecordingRef.current = true;
+      isStartingRecordingRef.current = false;
+      setIsStartingRecording(false);
       setIsRecording(true);
-      setSpeechPreview(typedPrefix);
     } catch (error) {
       stream?.getTracks().forEach((track) => track.stop());
+      isStartingRecordingRef.current = false;
+      setIsStartingRecording(false);
       isRecordingRef.current = false;
       setIsRecording(false);
-      setSpeechPreview("");
       setSpeechError(error instanceof Error && error.name === "NotAllowedError"
         ? "Allow microphone access to use voice input."
         : "Could not start voice recording. Please try again.");
     }
   }
 
-  function beginHoldToSpeak() {
-    if (loading || isTranscribing) return;
-    voicePressActiveRef.current = true;
-    suppressClickRef.current = false;
-    holdTimerRef.current = window.setTimeout(() => {
-      holdTimerRef.current = null;
-      if (!voicePressActiveRef.current) return;
-      suppressClickRef.current = true;
-      void startVoiceInput();
-    }, 300);
-  }
-
-  function finishHoldToSpeak() {
-    voicePressActiveRef.current = false;
-    if (holdTimerRef.current !== null) {
-      window.clearTimeout(holdTimerRef.current);
-      holdTimerRef.current = null;
-    }
-    try {
-      speechRecognitionRef.current?.stop();
-    } catch {
-      speechRecognitionRef.current = null;
-    }
+  function toggleVoiceInput() {
     if (isRecordingRef.current && mediaRecorderRef.current?.state === "recording") {
       isRecordingRef.current = false;
       setIsRecording(false);
+      try {
+        speechRecognitionRef.current?.stop();
+      } catch {
+        speechRecognitionRef.current = null;
+      }
       mediaRecorderRef.current.stop();
+      return;
     }
+    if (loading || isTranscribing) return;
+    void startVoiceInput();
   }
 
   async function copyText(text: string, index: number) {
@@ -2025,17 +2006,6 @@ export default function ChatWindow() {
               </div>
             ))}
 
-            {(speechPreview || isRecording || isTranscribing) && (
-              <div className="ml-auto max-w-[85%] overflow-hidden rounded-xl bg-blue-600 p-4 [overflow-wrap:anywhere]" aria-live="polite">
-                <div className="text-sm leading-7">{speechPreview || (isRecording ? "Listening..." : "Transcribing audio...")}</div>
-                {(isRecording || isTranscribing) && (
-                  <div className="mt-3 border-t border-white/10 pt-2 text-xs text-blue-100">
-                    {isRecording ? "Listening..." : "Transcribing audio..."}
-                  </div>
-                )}
-              </div>
-            )}
-
             {loading && (
               <div
                 className="mr-auto flex max-w-[85%] items-center gap-3 rounded-xl bg-neutral-800 p-4 [overflow-wrap:anywhere]"
@@ -2156,53 +2126,71 @@ export default function ChatWindow() {
                   <Paperclip size={20} aria-hidden="true" />
                 </label>
 
-                <textarea
-                  ref={promptInputRef}
-                  rows={1}
-                  className="order-3 max-h-[45vh] min-h-11 min-w-0 flex-1 resize-none overflow-y-auto bg-transparent px-2 py-3 text-sm leading-5 text-white outline-none placeholder:text-neutral-500"
-                  placeholder={activeAgent === "cyber" ? "Ask CyberMail about Gmail or your calendar..." : activeAgent === "maps" ? "Search for a place or ask for directions..." : "Ask Teller AI anything..."}
-                  value={input}
-                  disabled={isRecording || isTranscribing || loading}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      void sendMessage();
-                    }
-                  }}
-                  aria-label={`Message ${activeAgent === "cyber" ? "CyberMail" : activeAgent === "maps" ? "CyberMaps" : "Teller AI"}`}
-                />
+                {isRecording || isTranscribing ? (
+                  <div
+                    className="order-3 flex h-11 min-w-0 flex-1 items-center gap-3 px-2 text-sm text-neutral-300"
+                    role="status"
+                    aria-live="polite"
+                  >
+                    {isRecording ? (
+                      <>
+                        <span className="h-2 w-2 shrink-0 rounded-full bg-red-500" aria-hidden="true" />
+                        <span className="shrink-0">Recording</span>
+                        <span className="flex h-7 min-w-0 flex-1 items-center justify-center gap-1" aria-label="Audio recording in progress">
+                          {[0.3, 0.55, 0.8, 0.45, 1, 0.65, 0.4, 0.75, 0.5].map((height, index) => (
+                            <span
+                              key={index}
+                              className="voice-audio-bar"
+                              style={{ height: `${height * 100}%`, animationDelay: `${index * 90}ms` }}
+                            />
+                          ))}
+                        </span>
+                      </>
+                    ) : (
+                      <span>Transcribing audio...</span>
+                    )}
+                  </div>
+                ) : (
+                  <textarea
+                    ref={promptInputRef}
+                    rows={1}
+                    className="order-3 max-h-[45vh] min-h-11 min-w-0 flex-1 resize-none overflow-y-auto bg-transparent px-2 py-3 text-sm leading-5 text-white outline-none placeholder:text-neutral-500"
+                    placeholder={activeAgent === "cyber" ? "Ask CyberMail about Gmail or your calendar..." : activeAgent === "maps" ? "Search for a place or ask for directions..." : "Ask Teller AI anything..."}
+                    value={input}
+                    disabled={loading}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        void sendMessage();
+                      }
+                    }}
+                    aria-label={`Message ${activeAgent === "cyber" ? "CyberMail" : activeAgent === "maps" ? "CyberMaps" : "Teller AI"}`}
+                  />
+                )}
 
                 <button
                   type="button"
-                  onPointerDown={(event) => {
-                    event.currentTarget.setPointerCapture(event.pointerId);
-                    beginHoldToSpeak();
-                  }}
-                  onPointerUp={finishHoldToSpeak}
-                  onPointerCancel={() => {
-                    suppressClickRef.current = false;
-                    finishHoldToSpeak();
-                  }}
-                  onClick={() => {
-                    if (suppressClickRef.current) {
-                      suppressClickRef.current = false;
-                      return;
-                    }
-                    void sendMessage();
-                  }}
-                  disabled={loading || isTranscribing}
-                  className={`order-4 flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed disabled:bg-neutral-700 disabled:text-neutral-400 ${isRecording ? "bg-red-500 text-white hover:bg-red-400" : "bg-white text-neutral-950 hover:bg-neutral-200"}`}
-                  aria-label={isRecording ? "Release to transcribe" : "Send message or hold to speak"}
-                  title={isRecording ? "Release to transcribe" : "Click to send, hold to speak"}
+                  onClick={toggleVoiceInput}
+                  disabled={loading || isStartingRecording || isTranscribing}
+                  className={`order-4 flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed disabled:bg-neutral-700 disabled:text-neutral-400 ${isRecording ? "bg-red-500 text-white hover:bg-red-400" : "text-neutral-300 hover:bg-neutral-800 hover:text-white"}`}
+                  aria-label={isStartingRecording ? "Starting microphone" : isRecording ? "Stop recording" : "Transcribe voice input"}
+                  title={isStartingRecording ? "Starting microphone" : isRecording ? "Stop recording" : "Transcribe voice input"}
+                  aria-pressed={isRecording}
                 >
-                  {isTranscribing ? (
-                    <LoaderCircle size={20} className="animate-spin" aria-hidden="true" />
-                  ) : input.trim() || pendingFile ? (
-                    <ArrowUp size={21} strokeWidth={2.5} aria-hidden="true" />
-                  ) : (
-                    <Mic size={20} aria-hidden="true" />
-                  )}
+                  {isStartingRecording
+                    ? <LoaderCircle size={20} className="animate-spin" aria-hidden="true" />
+                    : <Mic size={20} aria-hidden="true" />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void sendMessage()}
+                  disabled={loading || isTranscribing || (!input.trim() && !pendingFile)}
+                  className="order-5 flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white text-neutral-950 transition-colors hover:bg-neutral-200 disabled:cursor-not-allowed disabled:bg-neutral-700 disabled:text-neutral-400"
+                  aria-label="Send message"
+                  title="Send message"
+                >
+                  <ArrowUp size={21} strokeWidth={2.5} aria-hidden="true" />
                 </button>
                 </div>
                 {speechError && <p className="px-3 pt-2 text-xs text-rose-300" role="alert">{speechError}</p>}

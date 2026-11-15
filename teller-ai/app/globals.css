@@ -69,8 +69,24 @@ body {
   }
 }
 
+.voice-audio-bar {
+  width: 0.2rem;
+  flex: none;
+  border-radius: 9999px;
+  background: #f87171;
+  transform-origin: center;
+  animation: voice-audio-wave 900ms ease-in-out infinite;
+}
+
+@keyframes voice-audio-wave {
+  50% {
+    transform: scaleY(0.35);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .pixel-loader__pixel {
+  .pixel-loader__pixel,
+  .voice-audio-bar {
     animation: none;
     opacity: 0.85;
   }
