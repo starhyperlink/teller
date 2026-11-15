@@ -830,7 +830,7 @@ export default function ChatWindow() {
   }
 
   function openUserPanel() {
-    const userPanelUrl = `${window.location.origin}/Settings`;
+    const userPanelUrl = `${window.location.origin}/settings`;
     window.open(userPanelUrl, "_blank", "noopener,noreferrer");
   }
 

@@ -121,7 +121,7 @@ export function AppAuthProvider({ children }: { children: ReactNode }) {
 
   function handleRedirectCallback(appState?: AppState) {
     if (typeof window !== "undefined") {
-      window.history.replaceState({}, document.title, appState?.returnTo || "/Settings");
+      window.history.replaceState({}, document.title, appState?.returnTo || "/settings");
     }
   }
 

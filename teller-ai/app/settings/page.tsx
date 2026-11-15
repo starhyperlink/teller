@@ -16,7 +16,7 @@ type UserMemory = {
   createdAt: string;
 };
 
-export default function SettingsPage() {
+export default function AccountSettingsPage() {
   const { user, isAuthenticated, isLoading, loginWithRedirect, logout, getAccessTokenSilently } = useAppAuth();
   const canManageVoiceSample = isVoicePromptManager(user?.email, user?.email_verified);
   const accountId = user?.sub || user?.email || "guest";
