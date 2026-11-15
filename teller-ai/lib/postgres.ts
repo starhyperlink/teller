@@ -124,6 +124,14 @@ async function ensureSchema() {
         )
       `);
       await getPool().query(`
+        CREATE TABLE IF NOT EXISTS teller_user_profile_pictures (
+          user_id TEXT PRIMARY KEY,
+          content_type TEXT NOT NULL,
+          media_data BYTEA NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+      await getPool().query(`
         CREATE TABLE IF NOT EXISTS teller_user_memories (
           id UUID PRIMARY KEY,
           user_id TEXT NOT NULL,
@@ -343,6 +351,36 @@ export async function updateUserAccountProfile(
     `,
     [userId, profile.firstName, profile.surname, profile.country, profile.phoneCountry, profile.phoneNumber],
   );
+}
+
+export async function getUserProfilePicture(userId: string) {
+  await ensureSchema();
+  const result = await getPool().query<{ content_type: string; media_data: Buffer }>(
+    "SELECT content_type, media_data FROM teller_user_profile_pictures WHERE user_id = $1",
+    [userId],
+  );
+  const row = result.rows[0];
+  return row ? { contentType: row.content_type, mediaData: row.media_data } : null;
+}
+
+export async function saveUserProfilePicture(userId: string, mediaData: Buffer) {
+  await ensureSchema();
+  await getPool().query(
+    `
+      INSERT INTO teller_user_profile_pictures (user_id, content_type, media_data, updated_at)
+      VALUES ($1, 'image/webp', $2, NOW())
+      ON CONFLICT (user_id) DO UPDATE SET
+        content_type = EXCLUDED.content_type,
+        media_data = EXCLUDED.media_data,
+        updated_at = NOW()
+    `,
+    [userId, mediaData],
+  );
+}
+
+export async function deleteUserProfilePicture(userId: string) {
+  await ensureSchema();
+  await getPool().query("DELETE FROM teller_user_profile_pictures WHERE user_id = $1", [userId]);
 }
 
 export async function updateUserAccountPlan(userId: string, planKey: string) {

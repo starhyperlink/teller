@@ -55,6 +55,25 @@ function combineWavAudio(wavFiles: Buffer[]) {
   return Buffer.concat([header, riffBody]);
 }
 
+function getWavDuration(wavBytes: Buffer) {
+  const wav = parseWav(wavBytes);
+  if (!wav || !wav.sampleRate || !wav.channels || !wav.bitsPerSample) {
+    throw new Error("The speech provider returned an unsupported audio format.");
+  }
+  const audioBytes = wav.audioChunks.reduce((total, chunk) => total + chunk.length, 0);
+  return audioBytes / (wav.sampleRate * wav.channels * wav.bitsPerSample / 8);
+}
+
+function createAudioResponse(audio: Buffer, segmentDurations: number[]) {
+  return new Response(new Blob([Uint8Array.from(audio)], { type: "audio/wav" }), {
+    headers: {
+      "Content-Type": "audio/wav",
+      "Cache-Control": "no-store",
+      "X-TTS-Segment-Durations": segmentDurations.join(","),
+    },
+  });
+}
+
 async function loadSharedVoicePrompt(configuredPromptPath?: string) {
   const storedPrompt = await getSharedVoicePrompt();
   if (storedPrompt && storedPrompt.mediaData.length > 0) {
@@ -221,24 +240,22 @@ export async function POST(request: Request) {
         const config = getNvidiaAIConfig();
         const endpoint = process.env.NVIDIA_TTS_API_URL?.trim() || NVIDIA_TTS_DEFAULT_URL;
         const audioParts: Buffer[] = [];
+        const segmentDurations: number[] = [];
         nvidiaFailureStatus = 502;
         for (const chunk of splitTextForSpeech(text)) {
-          audioParts.push(await synthesizeSpeech(
+          const audioPart = await synthesizeSpeech(
             chunk,
             prompt.audio,
             prompt.sampleRate,
             config.apiKey,
             endpoint,
-          ));
+          );
+          audioParts.push(audioPart);
+          segmentDurations.push(getWavDuration(audioPart));
         }
 
         const audio = combineWavAudio(audioParts);
-        return new Response(new Blob([Uint8Array.from(audio)], { type: "audio/wav" }), {
-          headers: {
-            "Content-Type": "audio/wav",
-            "Cache-Control": "no-store",
-          },
-        });
+        return createAudioResponse(audio, segmentDurations);
       } catch (error) {
         nvidiaFailureMessage = error instanceof Error
           ? error.message
@@ -257,12 +274,7 @@ export async function POST(request: Request) {
     try {
       const prompt = await getSharedVoicePromptForSpeech();
       const audio = await synthesizeWithOpenRouter(text, openRouterApiKey, prompt.audio);
-      return new Response(new Blob([Uint8Array.from(audio)], { type: "audio/wav" }), {
-        headers: {
-          "Content-Type": "audio/wav",
-          "Cache-Control": "no-store",
-        },
-      });
+      return createAudioResponse(audio, [getWavDuration(audio)]);
     } catch (error) {
       console.error("OpenRouter fallback failed:", error);
       const openRouterFailureMessage = error instanceof Error

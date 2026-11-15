@@ -8,6 +8,7 @@ import { COUNTRY_OPTIONS, PHONE_CODE_OPTIONS, countryFlag, splitInternationalPho
 import { prepareVoicePrompt } from "@/lib/voice-prompt-client";
 import { isVoicePromptManager, VOICE_PROMPT_MANAGER_EMAIL } from "@/lib/voice-prompt-access";
 import { MAX_USER_MEMORIES, MAX_USER_MEMORY_CHARS } from "@/lib/user-memory";
+import { MAX_PROFILE_PICTURE_BYTES, PROFILE_PICTURE_TYPES } from "@/lib/profile-picture";
 
 type UserMemory = {
   id: string;
@@ -31,6 +32,11 @@ export default function SettingsPage() {
   const [country, setCountry] = useState("");
   const [phoneCountry, setPhoneCountry] = useState("US");
   const [phoneNumber, setPhoneNumber] = useState("");
+  const [profilePicture, setProfilePicture] = useState(user?.picture || "");
+  const [hasCustomProfilePicture, setHasCustomProfilePicture] = useState(false);
+  const [isUploadingProfilePicture, setIsUploadingProfilePicture] = useState(false);
+  const [profilePictureMessage, setProfilePictureMessage] = useState("");
+  const [profilePictureError, setProfilePictureError] = useState("");
   const [profileMessage, setProfileMessage] = useState("");
   const [profileError, setProfileError] = useState("");
   const [isSavingProfile, setIsSavingProfile] = useState(false);
@@ -49,6 +55,7 @@ export default function SettingsPage() {
     name: [firstName, surname].filter(Boolean).join(" ") || user?.name || "Teller User",
     email: user?.email || "user@example.com",
     picture:
+      profilePicture ||
       user?.picture ||
       "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=200&q=80",
   };
@@ -77,6 +84,8 @@ export default function SettingsPage() {
         });
         if (!response.ok) return;
         const account = await response.json();
+        setProfilePicture(account.picture || user?.picture || "");
+        setHasCustomProfilePicture(Boolean(account.hasCustomPicture));
         setFirstName(account.firstName || user?.given_name || account.name?.split(" ")[0] || "");
         setSurname(account.surname || user?.family_name || account.name?.split(" ").slice(1).join(" ") || "");
         setCountry(account.country || "");
@@ -104,6 +113,69 @@ export default function SettingsPage() {
       window.removeEventListener("pageshow", loadAccount);
     };
   }, [getAccessTokenSilently, isAuthenticated, isLoading, user]);
+
+  async function uploadProfilePicture(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setProfilePictureError("");
+    setProfilePictureMessage("");
+
+    if (!PROFILE_PICTURE_TYPES.includes(file.type as (typeof PROFILE_PICTURE_TYPES)[number])) {
+      setProfilePictureError("Use a JPEG, PNG, or WebP image.");
+      return;
+    }
+    if (file.size > MAX_PROFILE_PICTURE_BYTES) {
+      setProfilePictureError("Profile pictures must be 5 MB or smaller.");
+      return;
+    }
+
+    setIsUploadingProfilePicture(true);
+    try {
+      const token = await getAccessTokenSilently();
+      const formData = new FormData();
+      formData.append("profilePicture", file);
+      const response = await fetch("/api/account/profile-picture", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Could not upload your profile picture.");
+      if (typeof result.picture !== "string" || !result.picture.startsWith("data:image/webp;base64,")) {
+        throw new Error("The uploaded profile picture response was invalid.");
+      }
+      setProfilePicture(result.picture);
+      setHasCustomProfilePicture(true);
+      setProfilePictureMessage("Profile picture updated.");
+    } catch (error) {
+      setProfilePictureError(error instanceof Error ? error.message : "Could not upload your profile picture.");
+    } finally {
+      setIsUploadingProfilePicture(false);
+    }
+  }
+
+  async function removeProfilePicture() {
+    setIsUploadingProfilePicture(true);
+    setProfilePictureError("");
+    setProfilePictureMessage("");
+    try {
+      const token = await getAccessTokenSilently();
+      const response = await fetch("/api/account/profile-picture", {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Could not remove your profile picture.");
+      setProfilePicture(user?.picture || "");
+      setHasCustomProfilePicture(false);
+      setProfilePictureMessage("Using your account photo.");
+    } catch (error) {
+      setProfilePictureError(error instanceof Error ? error.message : "Could not remove your profile picture.");
+    } finally {
+      setIsUploadingProfilePicture(false);
+    }
+  }
 
   useEffect(() => {
     if (isLoading || !isAuthenticated) return;
@@ -297,6 +369,33 @@ export default function SettingsPage() {
             <h1 className="text-3xl font-bold">Account Settings</h1>
           </div>
         </div>
+        {isAuthenticated && (
+          <div className="mb-6 flex flex-wrap items-center gap-3">
+            <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-neutral-700 px-3 py-2 text-sm hover:bg-neutral-800">
+              {isUploadingProfilePicture ? <LoaderCircle size={16} className="animate-spin" /> : <Upload size={16} />}
+              {isUploadingProfilePicture ? "Updating..." : "Change profile picture"}
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                onChange={(event) => void uploadProfilePicture(event)}
+                disabled={isUploadingProfilePicture}
+                className="sr-only"
+              />
+            </label>
+            {hasCustomProfilePicture && (
+              <button
+                type="button"
+                onClick={() => void removeProfilePicture()}
+                disabled={isUploadingProfilePicture}
+                className="rounded-lg border border-neutral-700 px-3 py-2 text-sm text-neutral-300 hover:bg-neutral-800 disabled:opacity-60"
+              >
+                Use account photo
+              </button>
+            )}
+            {profilePictureMessage && <span className="text-sm text-emerald-400" role="status">{profilePictureMessage}</span>}
+            {profilePictureError && <span className="text-sm text-red-400" role="alert">{profilePictureError}</span>}
+          </div>
+        )}
 
         <div className="mt-8 space-y-6">
           <section className="rounded-xl border border-neutral-800 bg-neutral-950 p-5">

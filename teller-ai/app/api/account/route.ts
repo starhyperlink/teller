@@ -6,6 +6,7 @@ import {
   getUserAccountData,
   getUserChatData,
   getUserDailyImageUsage,
+  getUserProfilePicture,
   updateUserAccountProfile,
 } from "@/lib/postgres";
 import { LOCAL_TEST_USER_ID } from "@/lib/local-test-auth";
@@ -25,6 +26,7 @@ export async function GET(request: Request) {
       country: "",
       phone: "",
       picture: "",
+      hasCustomPicture: false,
       plan: plans.free.name,
       billingInterval: plans.free.interval,
       usageLimit: plans.free.usageLimit,
@@ -35,10 +37,11 @@ export async function GET(request: Request) {
   }
 
   try {
-    const [account, chatData, imageGenerationCount] = await Promise.all([
+    const [account, chatData, imageGenerationCount, profilePicture] = await Promise.all([
       getUserAccountData(userId),
       getUserChatData(userId),
       getUserDailyImageUsage(userId),
+      getUserProfilePicture(userId),
     ]);
     const planKey = account.planKey in plans ? account.planKey as PlanKey : "free";
     const plan = plans[planKey];
@@ -60,14 +63,17 @@ export async function GET(request: Request) {
       phoneCountryCode: parsedPhone.phoneCountryCode,
       phoneCountry,
       phoneNumber: parsedPhone.phoneNumber,
-      picture: identity.picture || "",
+      picture: profilePicture
+        ? `data:${profilePicture.contentType};base64,${profilePicture.mediaData.toString("base64")}`
+        : identity.picture || "",
+      hasCustomPicture: Boolean(profilePicture),
       plan: plan.name,
       billingInterval: plan.interval,
       usageLimit: plan.usageLimit,
       usageCount,
       imageGenerationLimit: plan.imageGenerationLimit,
       imageGenerationCount,
-    });
+    }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     console.error("Account API error:", error);
     return NextResponse.json({ error: "Could not load account." }, { status: 500 });

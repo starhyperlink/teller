@@ -22,6 +22,7 @@ import "katex/dist/katex.min.css";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { encodeAudioChunksToWav } from "@/lib/recording-audio";
 import { getExplicitMemoryRequest } from "@/lib/user-memory";
+import { formatTextForSpeech, splitTextForSpeech } from "@/lib/voice-format";
 
 type Message = {
   role: "user" | "assistant";
@@ -143,6 +144,7 @@ type GeneratedImage = {
 };
 
 type Theme = "auto" | "dark" | "light";
+type VoiceReplySegment = { text: string; duration: number };
 
 type SpeechRecognitionResultLike = { 0: { transcript: string } };
 type SpeechRecognitionEventLike = { results: ArrayLike<SpeechRecognitionResultLike> };
@@ -167,6 +169,30 @@ function getErrorMessage(error: unknown) {
     return error.message;
   }
   return "The request failed.";
+}
+
+function getVoiceReplySegments(content: string, durations: number[]): VoiceReplySegment[] {
+  const chunks = splitTextForSpeech(formatTextForSpeech(content));
+  if (!chunks.length) return [];
+
+  const chunkDurations = durations.length === chunks.length
+    ? durations
+    : (() => {
+        const totalDuration = durations.reduce((total, duration) => total + duration, 0) || chunks.length;
+        const totalLength = chunks.reduce((total, chunk) => total + chunk.length, 0);
+        return chunks.map((chunk) => totalDuration * chunk.length / totalLength);
+      })();
+
+  return chunks.map((text, index) => ({ text, duration: chunkDurations[index] }));
+}
+
+function getCurrentVoiceReplySegment(audio: HTMLAudioElement, segments: VoiceReplySegment[]) {
+  let elapsed = 0;
+  for (const segment of segments) {
+    elapsed += segment.duration;
+    if (audio.currentTime < elapsed) return segment.text;
+  }
+  return segments[segments.length - 1]?.text || "";
 }
 
 function getModeGreeting(agent: AgentMode) {
@@ -427,12 +453,20 @@ export default function ChatWindow() {
     content: string;
     message: string;
   } | null>(null);
+  const [voiceReplyPlayback, setVoiceReplyPlayback] = useState<{
+    index: number;
+    historyId: string | null;
+    content: string;
+    segment: string;
+    audio: HTMLAudioElement;
+  } | null>(null);
   const voiceReplyAudioRef = useRef<{
     index: number;
     historyId: string | null;
     content: string;
     url: string;
     audio: HTMLAudioElement;
+    segments: VoiceReplySegment[];
   } | null>(null);
   const voiceReplyAudioUrlRef = useRef<string | null>(null);
   const [isMounted, setIsMounted] = useState(false);
@@ -440,6 +474,7 @@ export default function ChatWindow() {
   const authReady = isMounted && !isAuthLoading;
   const hasSession = authReady && isAuthenticated;
   const [monthlyChatCount, setMonthlyChatCount] = useState(0);
+  const [profilePicture, setProfilePicture] = useState("");
   const [planName, setPlanName] = useState("Free");
   const [usageLimit, setUsageLimit] = useState(100);
   const [dailyImageCount, setDailyImageCount] = useState(0);
@@ -453,6 +488,7 @@ export default function ChatWindow() {
     name: user?.name || "Teller User",
     email: user?.email || "user@example.com",
     picture:
+      profilePicture ||
       user?.picture ||
       "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=200&q=80",
     isAuthenticated,
@@ -474,6 +510,7 @@ export default function ChatWindow() {
       URL.revokeObjectURL(voiceReplyAudio.url);
       voiceReplyAudioRef.current = null;
       voiceReplyAudioUrlRef.current = null;
+      setVoiceReplyPlayback((current) => current?.audio === voiceReplyAudio.audio ? null : current);
     }
   }, [activeHistoryId]);
 
@@ -626,10 +663,14 @@ export default function ChatWindow() {
   useEffect(() => {
     if (isAuthLoading || !isAuthenticated) return;
     getAccessTokenSilently()
-      .then((token) => fetch("/api/account", { headers: { Authorization: `Bearer ${token}` } }))
+      .then((token) => fetch("/api/account", {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      }))
       .then((response) => (response.ok ? response.json() : null))
       .then((account) => {
         if (!account) return;
+        if (typeof account.picture === "string") setProfilePicture(account.picture);
         setPlanName(account.plan);
         setUsageLimit(account.usageLimit);
         if (Number.isInteger(account.imageGenerationLimit)) {
@@ -1450,9 +1491,17 @@ export default function ChatWindow() {
       existingAudio.content === content
     ) {
       setVoiceReplyError(null);
+      setVoiceReplyPlayback({
+        index,
+        historyId: activeHistoryId,
+        content,
+        segment: getCurrentVoiceReplySegment(existingAudio.audio, existingAudio.segments),
+        audio: existingAudio.audio,
+      });
       try {
         await existingAudio.audio.play();
       } catch {
+        setVoiceReplyPlayback((current) => current?.audio === existingAudio.audio ? null : current);
         setVoiceReplyError({
           index,
           historyId: activeHistoryId,
@@ -1488,9 +1537,38 @@ export default function ChatWindow() {
       const url = URL.createObjectURL(audioBlob);
       voiceReplyAudioUrlRef.current = url;
       const audio = new Audio(url);
-      voiceReplyAudioRef.current = { index, historyId: requestedHistoryId, content, url, audio };
+      const segmentDurations = (response.headers.get("X-TTS-Segment-Durations") || "")
+        .split(",")
+        .map(Number)
+        .filter((duration) => Number.isFinite(duration) && duration > 0);
+      const segments = getVoiceReplySegments(content, segmentDurations);
+      voiceReplyAudioRef.current = { index, historyId: requestedHistoryId, content, url, audio, segments };
+      const updateCurrentSegment = () => {
+        setVoiceReplyPlayback({
+          index,
+          historyId: requestedHistoryId,
+          content,
+          segment: getCurrentVoiceReplySegment(audio, segments),
+          audio,
+        });
+      };
+      audio.addEventListener("timeupdate", updateCurrentSegment);
+      audio.addEventListener("loadedmetadata", updateCurrentSegment);
+      audio.addEventListener("play", updateCurrentSegment);
+      audio.addEventListener("ended", () => {
+        setVoiceReplyPlayback((current) => current?.audio === audio ? null : current);
+      });
+      audio.addEventListener("pause", () => {
+        setVoiceReplyPlayback((current) => current?.audio === audio ? null : current);
+      });
+      updateCurrentSegment();
       await audio.play();
     } catch (error) {
+      setVoiceReplyPlayback((current) => current?.index === index &&
+        current.historyId === requestedHistoryId &&
+        current.content === content
+        ? null
+        : current);
       setVoiceReplyError({
         index,
         historyId: requestedHistoryId,
@@ -1555,18 +1633,40 @@ export default function ChatWindow() {
           {hasSession && (
             <div className="min-h-0 flex-1 overflow-y-auto space-y-5 text-sm text-neutral-400 modern-scroll">
               <section aria-labelledby="chat-history-heading">
-                <h2 id="chat-history-heading" className="mb-2 px-1 text-xs font-semibold uppercase tracking-wider text-neutral-500">Chat history</h2>
+                <h2 id="chat-history-heading" className="mb-2 px-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-neutral-500">Chat history</h2>
                 {modeHistories.length === 0 && <p className="px-1">No chats yet</p>}
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   {modeHistories.slice(0, 6).map((h) => (
-                    <div key={h.id} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter') loadHistory(h.id); }} onClick={() => loadHistory(h.id)} className={`flex items-center justify-between w-full rounded-md px-3 py-2 hover:bg-neutral-800 ${h.id === activeHistoryId ? "bg-neutral-800" : ""}`}>
-                      <div className="min-w-0">
-                        <div className="truncate text-white">{h.title}</div>
-                        <div className="mt-1 text-xs text-neutral-400">{new Date(h.updatedAt).toLocaleString()}</div>
-                      </div>
-                      <div className="ml-2 flex-shrink-0">
-                        <button onClick={(e) => { e.stopPropagation(); deleteHistory(h.id); }} className="rounded px-2 py-1 text-xs bg-neutral-800">Delete</button>
-                      </div>
+                    <div
+                      key={h.id}
+                      className={`group flex items-center gap-1 rounded-lg border p-1 transition-colors ${
+                        h.id === activeHistoryId
+                          ? "border-sky-400/25 bg-sky-400/[0.08] shadow-[inset_2px_0_0_0_rgba(56,189,248,0.8)]"
+                          : "border-white/[0.06] bg-white/[0.025] hover:border-white/10 hover:bg-white/[0.05]"
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => loadHistory(h.id)}
+                        aria-current={h.id === activeHistoryId ? "page" : undefined}
+                        className="min-w-0 flex-1 px-2 py-1.5 text-left"
+                      >
+                        <span className={`block truncate text-xs ${h.id === activeHistoryId ? "font-medium text-sky-100" : "text-neutral-200 group-hover:text-white"}`}>
+                          {h.title}
+                        </span>
+                        <span className="mt-0.5 block truncate text-[10px] text-neutral-500">
+                          {new Date(h.updatedAt).toLocaleString()}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => deleteHistory(h.id)}
+                        aria-label={`Delete ${h.title}`}
+                        title="Delete chat"
+                        className="mr-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-neutral-500 transition-colors hover:bg-rose-400/10 hover:text-rose-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-400"
+                      >
+                        <X size={14} aria-hidden="true" />
+                      </button>
                     </div>
                   ))}
                 </div>
@@ -1938,6 +2038,14 @@ export default function ChatWindow() {
                     )}
                   </>
                 )}
+                {voiceReplyPlayback?.index === index &&
+                  voiceReplyPlayback.historyId === activeHistoryId &&
+                  voiceReplyPlayback.content === message.content && (
+                    <p className="mt-3 border-l-2 border-sky-400 pl-3 text-sm leading-6 text-sky-200" role="status" aria-live="polite">
+                      <span className="mr-2 text-xs font-medium uppercase tracking-wide text-sky-400">Reading</span>
+                      {voiceReplyPlayback.segment}
+                    </p>
+                  )}
                 <div className="mt-3 flex gap-2 border-t border-white/10 pt-2 opacity-70">
                   {message.role === "assistant" ? (
                     <>
@@ -1947,13 +2055,18 @@ export default function ChatWindow() {
                         onClick={() => void generateVoiceReply(message.content, index)}
                         disabled={voiceReplyLoading === index}
                         className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-neutral-300 hover:bg-white/10 hover:text-white disabled:opacity-50"
-                        aria-label="Listen to reply"
+                        aria-label={voiceReplyLoading === index ? "Generating voice" : "Listen to reply"}
+                        aria-busy={voiceReplyLoading === index}
                         title="Listen to reply"
                       >
-                        {voiceReplyLoading === index
-                          ? <LoaderCircle size={14} className="animate-spin" aria-hidden="true" />
-                          : <Volume2 size={14} aria-hidden="true" />}
-                        {voiceReplyLoading === index ? "Generating voice..." : "Listen"}
+                        {voiceReplyLoading === index ? (
+                          <LoaderCircle size={14} className="animate-spin" aria-hidden="true" />
+                        ) : (
+                          <>
+                            <Volume2 size={14} aria-hidden="true" />
+                            Listen
+                          </>
+                        )}
                       </button>
                     </>
                   ) : (
