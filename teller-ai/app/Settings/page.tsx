@@ -2,11 +2,18 @@
 
 import { useAppAuth } from "@/components/Auth0Provider";
 import { LoaderCircle, Upload } from "lucide-react";
-import { useEffect, useState, type ChangeEvent } from "react";
+import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 import PayPalUpgradeButton from "@/components/PayPalUpgradeButton";
 import { COUNTRY_OPTIONS, PHONE_CODE_OPTIONS, countryFlag, splitInternationalPhone } from "@/lib/country-options";
 import { prepareVoicePrompt } from "@/lib/voice-prompt-client";
 import { isVoicePromptManager, VOICE_PROMPT_MANAGER_EMAIL } from "@/lib/voice-prompt-access";
+import { MAX_USER_MEMORIES, MAX_USER_MEMORY_CHARS } from "@/lib/user-memory";
+
+type UserMemory = {
+  id: string;
+  memory: string;
+  createdAt: string;
+};
 
 export default function SettingsPage() {
   const { user, isAuthenticated, isLoading, loginWithRedirect, logout, getAccessTokenSilently } = useAppAuth();
@@ -31,6 +38,12 @@ export default function SettingsPage() {
   const [isPreparingVoiceSample, setIsPreparingVoiceSample] = useState(false);
   const [voiceSampleMessage, setVoiceSampleMessage] = useState("");
   const [voiceSampleError, setVoiceSampleError] = useState("");
+  const [userMemories, setUserMemories] = useState<UserMemory[]>([]);
+  const [memoryInput, setMemoryInput] = useState("");
+  const [memoryError, setMemoryError] = useState("");
+  const [memoryMessage, setMemoryMessage] = useState("");
+  const [isLoadingMemories, setIsLoadingMemories] = useState(true);
+  const [isSavingMemory, setIsSavingMemory] = useState(false);
 
   const accountProfile = {
     name: [firstName, surname].filter(Boolean).join(" ") || user?.name || "Teller User",
@@ -92,6 +105,32 @@ export default function SettingsPage() {
     };
   }, [getAccessTokenSilently, isAuthenticated, isLoading, user]);
 
+  useEffect(() => {
+    if (isLoading || !isAuthenticated) return;
+    let active = true;
+    const loadMemories = async () => {
+      try {
+        const token = await getAccessTokenSilently();
+        const response = await fetch("/api/account/memory", {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || "Could not load saved memories.");
+        if (!Array.isArray(result.memories)) throw new Error("The saved memories response was invalid.");
+        if (active) setUserMemories(result.memories);
+      } catch (error) {
+        if (active) setMemoryError(error instanceof Error ? error.message : "Could not load saved memories.");
+      } finally {
+        if (active) setIsLoadingMemories(false);
+      }
+    };
+    void loadMemories();
+    return () => {
+      active = false;
+    };
+  }, [getAccessTokenSilently, isAuthenticated, isLoading]);
+
   async function saveProfile() {
     setIsSavingProfile(true);
     setProfileMessage("");
@@ -150,6 +189,82 @@ export default function SettingsPage() {
     } finally {
       setIsUploadingVoiceSample(false);
       setIsPreparingVoiceSample(false);
+    }
+  }
+
+  async function saveMemory(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const memory = memoryInput.trim();
+    if (!memory) return;
+
+    setIsSavingMemory(true);
+    setMemoryError("");
+    setMemoryMessage("");
+    try {
+      const token = await getAccessTokenSilently();
+      const response = await fetch("/api/account/memory", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ memory }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Could not save that memory.");
+      if (!Array.isArray(result.memories)) throw new Error("The saved memories response was invalid.");
+      setUserMemories(result.memories);
+      setMemoryInput("");
+      setMemoryMessage("Memory saved for future chats.");
+    } catch (error) {
+      setMemoryError(error instanceof Error ? error.message : "Could not save that memory.");
+    } finally {
+      setIsSavingMemory(false);
+    }
+  }
+
+  async function removeMemory(id: string) {
+    setMemoryError("");
+    setMemoryMessage("");
+    try {
+      const token = await getAccessTokenSilently();
+      const response = await fetch("/api/account/memory", {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ id }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Could not delete that memory.");
+      setUserMemories((current) => current.filter((item) => item.id !== id));
+      setMemoryMessage("Memory deleted.");
+    } catch (error) {
+      setMemoryError(error instanceof Error ? error.message : "Could not delete that memory.");
+    }
+  }
+
+  async function clearMemories() {
+    if (!window.confirm("Delete all saved memories? This cannot be undone.")) return;
+    setMemoryError("");
+    setMemoryMessage("");
+    try {
+      const token = await getAccessTokenSilently();
+      const response = await fetch("/api/account/memory", {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ clearAll: true }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Could not delete saved memories.");
+      setUserMemories([]);
+      setMemoryMessage("All memories deleted.");
+    } catch (error) {
+      setMemoryError(error instanceof Error ? error.message : "Could not delete saved memories.");
     }
   }
 
@@ -283,6 +398,76 @@ export default function SettingsPage() {
               </div>
             )}
           </section>
+
+          {isAuthenticated && (
+            <section className="rounded-xl border border-neutral-800 bg-neutral-950 p-5">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold">Saved AI memory</h2>
+                  <p className="mt-2 max-w-2xl text-sm text-neutral-400">
+                    Only details you add here or explicitly ask Teller AI to remember are saved. They can personalize future chats across Teller AI, CyberMaps, and CyberMail. Review or delete them at any time.
+                  </p>
+                </div>
+                {userMemories.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => void clearMemories()}
+                    className="rounded-md border border-neutral-700 px-3 py-1.5 text-xs text-neutral-300 hover:bg-neutral-800"
+                  >
+                    Clear all
+                  </button>
+                )}
+              </div>
+              <form onSubmit={(event) => void saveMemory(event)} className="mt-4 flex flex-col gap-2 sm:flex-row">
+                <input
+                  value={memoryInput}
+                  onChange={(event) => setMemoryInput(event.target.value)}
+                  maxLength={MAX_USER_MEMORY_CHARS}
+                  placeholder="For example: I prefer concise answers."
+                  aria-label="Memory to save"
+                  className="h-10 min-w-0 flex-1 rounded-md border border-neutral-700 bg-neutral-900 px-3 text-sm text-white outline-none focus:border-white"
+                />
+                <button
+                  type="submit"
+                  disabled={isSavingMemory || !memoryInput.trim() || userMemories.length >= MAX_USER_MEMORIES}
+                  className="rounded-md bg-white px-4 py-2 text-sm font-medium text-neutral-950 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isSavingMemory ? "Saving..." : "Save memory"}
+                </button>
+              </form>
+              <p className="mt-1 text-xs text-neutral-500">
+                {memoryInput.length}/{MAX_USER_MEMORY_CHARS} characters · up to {MAX_USER_MEMORIES} memories
+              </p>
+              {isLoadingMemories ? (
+                <p className="mt-3 text-sm text-neutral-400" role="status">Loading saved memories...</p>
+              ) : userMemories.length > 0 ? (
+                <ul className="mt-4 divide-y divide-neutral-800">
+                  {userMemories.map((item) => (
+                    <li key={item.id} className="flex items-start justify-between gap-4 py-3">
+                      <div className="min-w-0">
+                        <p className="break-words text-sm text-neutral-200">{item.memory}</p>
+                        <time dateTime={item.createdAt} className="mt-1 block text-xs text-neutral-500">
+                          Saved {new Date(item.createdAt).toLocaleDateString()}
+                        </time>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void removeMemory(item.id)}
+                        className="shrink-0 rounded px-2 py-1 text-xs text-neutral-400 hover:bg-neutral-800 hover:text-white"
+                        aria-label={`Delete memory: ${item.memory}`}
+                      >
+                        Delete
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : !isLoadingMemories ? (
+                <p className="mt-4 text-sm text-neutral-500">No saved memories yet.</p>
+              ) : null}
+              {memoryMessage && <p className="mt-3 text-sm text-emerald-400" role="status">{memoryMessage}</p>}
+              {memoryError && <p className="mt-3 text-sm text-rose-300" role="alert">{memoryError}</p>}
+            </section>
+          )}
 
           {isAuthenticated && (
             <section className="rounded-xl border border-neutral-800 bg-neutral-950 p-5">

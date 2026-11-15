@@ -1,4 +1,5 @@
 import { callRoutedChatCompletion } from "@/lib/ai-router";
+import { formatUserMemoryPrompt } from "@/lib/user-memory";
 
 export const TELLER_AI_SYSTEM_PROMPT = `
 You are Teller AI, a powerful conversational AI assistant.
@@ -115,11 +116,13 @@ async function callTellerAICompletion(
     country?: string;
     compactPrompt?: boolean;
     systemPrompt?: string;
+    userMemory?: string[];
     tools?: unknown[];
   },
 ): Promise<TellerAIMessage> {
   const compactPrompt = options?.compactPrompt ?? false;
   const preparedMessages = prepareMessages(messages, compactPrompt);
+  const userMemoryPrompt = formatUserMemoryPrompt(options?.userMemory || []);
   const data = await callRoutedChatCompletion<{
     choices?: { message?: TellerAIMessage }[];
   }>({
@@ -131,6 +134,7 @@ async function callTellerAICompletion(
             compactPrompt
               ? "You are Teller AI, a helpful conversational assistant. Answer the latest user request clearly and concisely. Be honest, practical, and safe. Reply briefly and naturally to simple thanks; do not add unsolicited suggestions."
               : TELLER_AI_SYSTEM_PROMPT,
+            userMemoryPrompt,
             options?.country
               ? compactPrompt
                 ? `The user's country is ${options.country}; use it when relevant.`
@@ -158,6 +162,7 @@ export async function callTellerAIWithTools(
     country?: string;
     compactPrompt?: boolean;
     systemPrompt?: string;
+    userMemory?: string[];
   },
 ) {
   return callTellerAICompletion(messages, { ...options, tools });
@@ -170,6 +175,7 @@ export async function callTellerAI(
     country?: string;
     compactPrompt?: boolean;
     systemPrompt?: string;
+    userMemory?: string[];
   },
 ) {
   const message = await callTellerAICompletion(messages, options);

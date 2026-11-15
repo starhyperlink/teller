@@ -1,4 +1,5 @@
 import { getNvidiaAIConfig } from "@/lib/nvidia-ai";
+import { formatUserMemoryPrompt } from "@/lib/user-memory";
 
 const DEFAULT_RESOLUTION = "1K";
 const DEFAULT_ASPECT_RATIO = "1:1";
@@ -189,8 +190,10 @@ export async function analyzeImageWithNvidia(
   prompt: string,
   imageDataUrl: string,
   country?: string,
+  userMemory: string[] = [],
 ) {
   const { apiKey, apiBaseUrl, model } = getNvidiaAIConfig();
+  const userMemoryPrompt = formatUserMemoryPrompt(userMemory);
 
   const response = await fetch(apiBaseUrl, {
     method: "POST",
@@ -209,6 +212,7 @@ export async function analyzeImageWithNvidia(
             country
               ? `The authenticated user's country is ${country}. Use this context when relevant.`
               : "",
+            userMemoryPrompt,
           ].filter(Boolean).join("\n\n"),
         },
         {

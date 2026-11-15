@@ -21,6 +21,7 @@ import katex from "katex";
 import "katex/dist/katex.min.css";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { encodeAudioChunksToWav } from "@/lib/recording-audio";
+import { getExplicitMemoryRequest } from "@/lib/user-memory";
 
 type Message = {
   role: "user" | "assistant";
@@ -905,7 +906,7 @@ export default function ChatWindow() {
 
   async function sendMessage(messageText = input) {
     if (!messageText.trim()) return;
-    if (monthlyChatCount >= usageLimit) return;
+    if (monthlyChatCount >= usageLimit && !getExplicitMemoryRequest(messageText)) return;
 
     const userMessage: Message = {
       role: "user",
@@ -919,7 +920,8 @@ export default function ChatWindow() {
     setInput("");
     setLoading(true);
     setIsModeMenuOpen(false);
-    if (activeAgent === "maps") {
+    const isMemoryRequest = Boolean(getExplicitMemoryRequest(userMessage.content));
+    if (activeAgent === "maps" && !isMemoryRequest) {
       setActiveMapQuery(userMessage.content);
       if (activeHistoryId) {
         setHistories((previous) => previous.map((history) => (
@@ -1098,6 +1100,7 @@ export default function ChatWindow() {
       });
 
       const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Teller AI could not complete that request.");
 
       const hasServerUsageCount = Number.isInteger(data.usageCount);
       if (hasServerUsageCount) {
@@ -1105,7 +1108,7 @@ export default function ChatWindow() {
       }
 
       if (data.reply) {
-        if (isAuthenticated && !hasServerUsageCount) {
+        if (isAuthenticated && !hasServerUsageCount && !data.memoryAction) {
           setMonthlyChatCount((count) => count + 1);
         }
         const assistantMessage: Message = {
@@ -1141,7 +1144,7 @@ export default function ChatWindow() {
             }
             return next;
           });
-        } else if (activeHistoryId) {
+        } else if (activeHistoryId && !data.memoryAction) {
           // If the active history still has the default title, generate one now
           const current = histories.find((h) => h.id === activeHistoryId);
           if (current && (!current.title || current.title === "New chat")) {
@@ -2202,6 +2205,12 @@ export default function ChatWindow() {
                 </button>
               </div>
             )}
+            <p className="px-3 pt-2 text-center text-xs text-neutral-500">
+              Teller AI can make mistakes, just like ChatGPT. Check important information.{" "}
+              {hasSession
+                ? "To save a memory, start a message with “Remember that…”"
+                : "Sign in to save personal memories."}
+            </p>
           </div>
         </div>
           </>

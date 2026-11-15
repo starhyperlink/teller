@@ -1,8 +1,18 @@
 import { NextResponse } from "next/server";
 import { getAuthenticatedUserId } from "@/lib/auth0-auth";
-import { incrementUserUsage, createGooglePendingAction } from "@/lib/postgres";
+import {
+  addUserMemory,
+  createGooglePendingAction,
+  getUserMemories,
+  incrementUserUsage,
+} from "@/lib/postgres";
 import { LOCAL_TEST_USER_ID } from "@/lib/local-test-auth";
 import { callRoutedChatCompletion } from "@/lib/ai-router";
+import {
+  formatUserMemoryPrompt,
+  getExplicitMemoryRequest,
+  MAX_USER_MEMORY_CHARS,
+} from "@/lib/user-memory";
 import {
   buildOpenAITools,
   callGmailTool,
@@ -95,6 +105,24 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "A user message is required." }, { status: 400 });
     }
 
+    const explicitMemory = getExplicitMemoryRequest(messages[messages.length - 1].content);
+    if (explicitMemory) {
+      if (explicitMemory.length > MAX_USER_MEMORY_CHARS) {
+        return NextResponse.json(
+          { error: `Keep each memory under ${MAX_USER_MEMORY_CHARS} characters.` },
+          { status: 413 },
+        );
+      }
+      const status = await addUserMemory(userId, explicitMemory);
+      const reply = status === "saved"
+        ? "Saved to your memory. I’ll use it in future replies when relevant. You can review or delete it in Account Settings."
+        : status === "duplicate"
+          ? "That detail is already saved in your memory."
+          : "Your memory is full. Delete a saved detail in Account Settings before adding another.";
+      return NextResponse.json({ reply, memoryAction: true });
+    }
+
+    const userMemory = (await getUserMemories(userId)).map((item) => item.memory);
     const accessToken = await getGoogleAccessToken(userId);
     const gmailTools = await listGmailTools(accessToken);
     const tools = buildOpenAITools(gmailTools);
@@ -111,6 +139,7 @@ export async function POST(request: Request) {
           `Current time: ${new Date().toISOString()}.`,
           "When the user asks about a calendar time range without exact dates, resolve relative dates from the current time and state your interpretation.",
           "If no suitable Gmail MCP tool is available, say so rather than claiming to have searched.",
+          formatUserMemoryPrompt(userMemory),
         ].join(" "),
       },
       ...messages,

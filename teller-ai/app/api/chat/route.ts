@@ -9,11 +9,21 @@ import {
 import { hasChatAIProvider } from "@/lib/ai-router";
 import { analyzeImageWithNvidia } from "@/lib/openrouter-image";
 import { getAuthenticatedUserId } from "@/lib/auth0-auth";
-import { getUserAccountData, getUserGeneratedImage, incrementUserUsage } from "@/lib/postgres";
+import {
+  addUserMemory,
+  getUserAccountData,
+  getUserGeneratedImage,
+  getUserMemories,
+  incrementUserUsage,
+} from "@/lib/postgres";
 import { LOCAL_TEST_USER_ID } from "@/lib/local-test-auth";
 import { COUNTRY_OPTIONS } from "@/lib/country-options";
 import { MAX_IMAGE_BYTES, parseImageDataUrl } from "@/lib/image-input";
 import { prepareImageForAnalysis } from "@/lib/cloudflare-image";
+import {
+  getExplicitMemoryRequest,
+  MAX_USER_MEMORY_CHARS,
+} from "@/lib/user-memory";
 import {
   buildParallelOpenAITools,
   callParallelTool,
@@ -71,6 +81,34 @@ export async function POST(req: Request) {
     }
 
     const latestMessage = messages[messages.length - 1];
+    const latestContent = typeof latestMessage?.content === "string" ? latestMessage.content : "";
+    const isMemoryOnlyRequest = latestMessage?.role === "user" &&
+      !latestMessage.imageUrl &&
+      !latestMessage.imageStoragePath &&
+      !/\[Attachment:/i.test(latestContent);
+    const explicitMemory = isMemoryOnlyRequest ? getExplicitMemoryRequest(latestContent) : null;
+    if (explicitMemory) {
+      if (!userId) {
+        return NextResponse.json({ error: "Sign in to save personal memories." }, { status: 401 });
+      }
+      if (explicitMemory.length > MAX_USER_MEMORY_CHARS) {
+        return NextResponse.json(
+          { error: `Keep each memory under ${MAX_USER_MEMORY_CHARS} characters.` },
+          { status: 413 },
+        );
+      }
+      const status = await addUserMemory(userId, explicitMemory);
+      const reply = status === "saved"
+        ? "Saved to your memory. I’ll use it in future replies when relevant. You can review or delete it in Account Settings."
+        : status === "duplicate"
+          ? "That detail is already saved in your memory."
+          : "Your memory is full. Delete a saved detail in Account Settings before adding another.";
+      return NextResponse.json({ reply, memoryAction: true });
+    }
+
+    const userMemory = userId
+      ? (await getUserMemories(userId)).map((item) => item.memory)
+      : [];
     const hasInlineImage = typeof latestMessage?.imageUrl === "string";
     const hasStoredImage = typeof latestMessage?.imageStoragePath === "string";
     const hasImage = hasInlineImage || hasStoredImage;
@@ -148,7 +186,7 @@ export async function POST(req: Request) {
         const imageQuestion = recentContext
           ? `Conversation context:\n${recentContext}\n\nQuestion about the current image:\n${latestMessage.content}`
           : latestMessage.content;
-        reply = await analyzeImageWithNvidia(imageQuestion, imageDataUrl, country);
+        reply = await analyzeImageWithNvidia(imageQuestion, imageDataUrl, country, userMemory);
       } catch (error) {
         console.error("NVIDIA image analysis error:", error);
         return NextResponse.json(
@@ -163,6 +201,7 @@ export async function POST(req: Request) {
         try {
           reply = await callTellerAI(messages, {
             country,
+            userMemory,
             maxTokens,
             compactPrompt,
             ...(isMapsAgent
@@ -201,6 +240,7 @@ export async function POST(req: Request) {
           try {
             assistant = await callTellerAIWithTools(toolMessages, parallelTools, {
               country,
+              userMemory,
               maxTokens,
               compactPrompt,
               systemPrompt: [

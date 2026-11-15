@@ -1,4 +1,5 @@
 import { Pool } from "pg";
+import { MAX_USER_MEMORIES, MAX_USER_MEMORY_CHARS } from "@/lib/user-memory";
 
 type UserChatData = {
   history: unknown[];
@@ -23,6 +24,12 @@ export type GoogleConnectionRecord = {
 export type GooglePendingAction = {
   type: "gmail.create_draft" | "calendar.create_event";
   arguments: Record<string, unknown>;
+};
+
+export type UserMemory = {
+  id: string;
+  memory: string;
+  createdAt: string;
 };
 
 const globalForPostgres = globalThis as typeof globalThis & {
@@ -117,8 +124,20 @@ async function ensureSchema() {
         )
       `);
       await getPool().query(`
+        CREATE TABLE IF NOT EXISTS teller_user_memories (
+          id UUID PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          memory TEXT NOT NULL CHECK (char_length(memory) <= ${MAX_USER_MEMORY_CHARS}),
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+      await getPool().query(`
         CREATE INDEX IF NOT EXISTS teller_chat_media_user_history_idx
         ON teller_chat_media (user_id, history_id)
+      `);
+      await getPool().query(`
+        CREATE UNIQUE INDEX IF NOT EXISTS teller_user_memories_user_memory_idx
+        ON teller_user_memories (user_id, lower(memory))
       `);
       await getPool().query(`
         CREATE TABLE IF NOT EXISTS teller_google_connections (
@@ -412,6 +431,76 @@ export async function saveUserChatHistory(userId: string, history: unknown[]) {
     `,
     [userId, currentUsageMonth(), JSON.stringify(history)],
   );
+}
+
+export async function getUserMemories(userId: string): Promise<UserMemory[]> {
+  await ensureSchema();
+  const result = await getPool().query<{
+    id: string;
+    memory: string;
+    created_at: Date;
+  }>(
+    `
+      SELECT id, memory, created_at
+      FROM teller_user_memories
+      WHERE user_id = $1
+      ORDER BY created_at DESC, id DESC
+      LIMIT $2
+    `,
+    [userId, MAX_USER_MEMORIES],
+  );
+  return result.rows.map((row) => ({
+    id: row.id,
+    memory: row.memory,
+    createdAt: row.created_at.toISOString(),
+  }));
+}
+
+export async function addUserMemory(
+  userId: string,
+  memory: string,
+): Promise<"saved" | "duplicate" | "limit"> {
+  await ensureSchema();
+  const existing = await getPool().query<{ id: string }>(
+    "SELECT id FROM teller_user_memories WHERE user_id = $1 AND lower(memory) = lower($2) LIMIT 1",
+    [userId, memory],
+  );
+  if (existing.rows.length) return "duplicate";
+
+  const count = await getPool().query<{ count: string }>(
+    "SELECT COUNT(*)::text AS count FROM teller_user_memories WHERE user_id = $1",
+    [userId],
+  );
+  if (Number(count.rows[0]?.count || 0) >= MAX_USER_MEMORIES) return "limit";
+
+  const result = await getPool().query<{ id: string }>(
+    `
+      INSERT INTO teller_user_memories (id, user_id, memory)
+      VALUES ($1, $2, $3)
+      ON CONFLICT DO NOTHING
+      RETURNING id
+    `,
+    [crypto.randomUUID(), userId, memory],
+  );
+  return result.rows.length ? "saved" : "duplicate";
+}
+
+export async function deleteUserMemory(userId: string, memoryId: string) {
+  await ensureSchema();
+  const result = await getPool().query(
+    "DELETE FROM teller_user_memories WHERE user_id = $1 AND id = $2",
+    [userId, memoryId],
+  );
+  return (result.rowCount || 0) > 0;
+}
+
+export async function deleteAllUserMemories(userId: string) {
+  await ensureSchema();
+  const result = await getPool().query(
+    "DELETE FROM teller_user_memories WHERE user_id = $1",
+    [userId],
+  );
+  return result.rowCount || 0;
 }
 
 export async function saveUserChatMedia(
