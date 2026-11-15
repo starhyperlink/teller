@@ -71,6 +71,25 @@ async function loadSharedVoicePrompt(configuredPromptPath?: string) {
   return savedPrompt?.mediaData ?? promptAudio;
 }
 
+async function loadValidatedSharedVoicePrompt(configuredPromptPath?: string) {
+  const promptAudio = await loadSharedVoicePrompt(configuredPromptPath);
+  if (!promptAudio) {
+    throw new Error(
+      "The shared voice sample has not been configured. Ask the voice-sample manager to upload one in Account Settings or set NVIDIA_TTS_VOICE_PROMPT_PATH.",
+    );
+  }
+  if (promptAudio.length > MAX_REFERENCE_AUDIO_BYTES) {
+    throw new Error("The configured voice sample must be under 10 MB.");
+  }
+  const promptWav = validateReferenceWav(promptAudio);
+  if (!promptWav) {
+    throw new Error(
+      "The voice sample must be 3–10 seconds, mono, 16-bit PCM WAV at 22.05 kHz or higher.",
+    );
+  }
+  return { audio: promptAudio, sampleRate: promptWav.sampleRate };
+}
+
 async function synthesizeSpeech(
   text: string,
   promptAudio: Buffer,
@@ -170,6 +189,10 @@ export async function POST(request: Request) {
     }
 
     const promptPath = process.env.NVIDIA_TTS_VOICE_PROMPT_PATH?.trim();
+    let sharedVoicePromptPromise: ReturnType<typeof loadValidatedSharedVoicePrompt> | undefined;
+    const getSharedVoicePromptForSpeech = () => (
+      sharedVoicePromptPromise ??= loadValidatedSharedVoicePrompt(promptPath)
+    );
 
     let body: { text?: unknown };
     try {
@@ -193,21 +216,7 @@ export async function POST(request: Request) {
     let nvidiaFailureStatus = 503;
     if (nvidiaApiKey) {
       try {
-        const promptAudio = await loadSharedVoicePrompt(promptPath);
-        if (!promptAudio) {
-          throw new Error(
-            "The shared voice sample has not been configured. Ask the voice-sample manager to upload one in Account Settings or set NVIDIA_TTS_VOICE_PROMPT_PATH.",
-          );
-        }
-        if (promptAudio.length > MAX_REFERENCE_AUDIO_BYTES) {
-          throw new Error("The configured NVIDIA voice sample must be under 10 MB.");
-        }
-        const promptWav = validateReferenceWav(promptAudio);
-        if (!promptWav) {
-          throw new Error(
-            "The NVIDIA voice sample must be 3–10 seconds, mono, 16-bit PCM WAV at 22.05 kHz or higher.",
-          );
-        }
+        const prompt = await getSharedVoicePromptForSpeech();
 
         const config = getNvidiaAIConfig();
         const endpoint = process.env.NVIDIA_TTS_API_URL?.trim() || NVIDIA_TTS_DEFAULT_URL;
@@ -216,8 +225,8 @@ export async function POST(request: Request) {
         for (const chunk of splitTextForSpeech(text)) {
           audioParts.push(await synthesizeSpeech(
             chunk,
-            promptAudio,
-            promptWav.sampleRate,
+            prompt.audio,
+            prompt.sampleRate,
             config.apiKey,
             endpoint,
           ));
@@ -246,7 +255,8 @@ export async function POST(request: Request) {
     }
 
     try {
-      const audio = await synthesizeWithOpenRouter(text, openRouterApiKey);
+      const prompt = await getSharedVoicePromptForSpeech();
+      const audio = await synthesizeWithOpenRouter(text, openRouterApiKey, prompt.audio);
       return new Response(new Blob([Uint8Array.from(audio)], { type: "audio/wav" }), {
         headers: {
           "Content-Type": "audio/wav",

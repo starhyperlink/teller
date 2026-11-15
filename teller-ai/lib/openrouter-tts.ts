@@ -1,7 +1,7 @@
 const OPENROUTER_TTS_URL = "https://openrouter.ai/api/v1/audio/speech";
 const OPENROUTER_TTS_MODEL = "heygen/heygen-voice-1-turbo:free";
 const OPENROUTER_TTS_TIMEOUT_MS = 60_000;
-const PCM_SAMPLE_RATE = 24_000;
+const PCM_SAMPLE_RATE = 44_100;
 
 function pcmToWav(pcm: Buffer) {
   if (!pcm.length || pcm.length % 2 !== 0) {
@@ -26,7 +26,11 @@ function pcmToWav(pcm: Buffer) {
   return wav;
 }
 
-export async function synthesizeWithOpenRouter(text: string, apiKey: string) {
+export async function synthesizeWithOpenRouter(
+  text: string,
+  apiKey: string,
+  voiceReference: Buffer,
+) {
   const response = await fetch(OPENROUTER_TTS_URL, {
     method: "POST",
     headers: {
@@ -37,6 +41,12 @@ export async function synthesizeWithOpenRouter(text: string, apiKey: string) {
     body: JSON.stringify({
       model: OPENROUTER_TTS_MODEL,
       input: text,
+      input_references: [{
+        type: "input_audio",
+        input_audio: {
+          data: `data:audio/wav;base64,${voiceReference.toString("base64")}`,
+        },
+      }],
       response_format: "pcm",
     }),
     signal: AbortSignal.timeout(OPENROUTER_TTS_TIMEOUT_MS),
