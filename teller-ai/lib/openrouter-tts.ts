@@ -1,6 +1,30 @@
 const OPENROUTER_TTS_URL = "https://openrouter.ai/api/v1/audio/speech";
 const OPENROUTER_TTS_MODEL = "heygen/heygen-voice-1-turbo:free";
 const OPENROUTER_TTS_TIMEOUT_MS = 60_000;
+const PCM_SAMPLE_RATE = 24_000;
+
+function pcmToWav(pcm: Buffer) {
+  if (!pcm.length || pcm.length % 2 !== 0) {
+    throw new Error("OpenRouter returned invalid PCM audio data.");
+  }
+
+  const wav = Buffer.alloc(44 + pcm.length);
+  wav.write("RIFF", 0, "ascii");
+  wav.writeUInt32LE(wav.length - 8, 4);
+  wav.write("WAVE", 8, "ascii");
+  wav.write("fmt ", 12, "ascii");
+  wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20);
+  wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(PCM_SAMPLE_RATE, 24);
+  wav.writeUInt32LE(PCM_SAMPLE_RATE * 2, 28);
+  wav.writeUInt16LE(2, 32);
+  wav.writeUInt16LE(16, 34);
+  wav.write("data", 36, "ascii");
+  wav.writeUInt32LE(pcm.length, 40);
+  pcm.copy(wav, 44);
+  return wav;
+}
 
 export async function synthesizeWithOpenRouter(text: string, apiKey: string) {
   const response = await fetch(OPENROUTER_TTS_URL, {
@@ -8,12 +32,12 @@ export async function synthesizeWithOpenRouter(text: string, apiKey: string) {
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
-      Accept: "audio/mpeg",
+      Accept: "audio/pcm",
     },
     body: JSON.stringify({
       model: OPENROUTER_TTS_MODEL,
       input: text,
-      response_format: "mp3",
+      response_format: "pcm",
     }),
     signal: AbortSignal.timeout(OPENROUTER_TTS_TIMEOUT_MS),
     cache: "no-store",
@@ -39,7 +63,7 @@ export async function synthesizeWithOpenRouter(text: string, apiKey: string) {
     );
   }
 
-  const audio = Buffer.from(await response.arrayBuffer());
-  if (!audio.length) throw new Error("OpenRouter returned no audio data.");
-  return audio;
+  const pcm = Buffer.from(await response.arrayBuffer());
+  if (!pcm.length) throw new Error("OpenRouter returned no audio data.");
+  return pcmToWav(pcm);
 }

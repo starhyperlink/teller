@@ -247,9 +247,9 @@ export async function POST(request: Request) {
 
     try {
       const audio = await synthesizeWithOpenRouter(text, openRouterApiKey);
-      return new Response(new Blob([Uint8Array.from(audio)], { type: "audio/mpeg" }), {
+      return new Response(new Blob([Uint8Array.from(audio)], { type: "audio/wav" }), {
         headers: {
-          "Content-Type": "audio/mpeg",
+          "Content-Type": "audio/wav",
           "Cache-Control": "no-store",
         },
       });
