@@ -14,6 +14,9 @@ import {
   Mic,
   Paperclip,
   Sparkles,
+  Sun,
+  Moon,
+  Monitor,
   Volume2,
   X,
 } from "lucide-react";
@@ -1605,15 +1608,12 @@ export default function ChatWindow() {
         <div className="flex h-full flex-col">
           <div className="mb-4">
             <h1 className="relative mb-2 flex items-center justify-center text-2xl font-bold">
-              <img src="/jupiter-black.svg" alt="Jupiter" className="h-16 w-16 object-contain" />
+              <img src="/jupiter-black.svg" alt="Jupiter" className="h-20 w-20 object-contain" />
               <button className="absolute right-0 rounded bg-neutral-800 px-2 py-1 text-sm md:hidden" onClick={() => setIsSidebarOpen(false)} aria-label="Close sidebar">
                 ✕
               </button>
             </h1>
 
-            <button className="mb-2 w-full rounded-lg bg-white px-4 py-2 font-medium text-black" onClick={() => createNewChat()}>
-              New Chat
-            </button>
             <button
               type="button"
               onClick={openGeneratedImageHistory}
@@ -1630,50 +1630,59 @@ export default function ChatWindow() {
             {/* Titles are generated automatically after the first assistant reply; removed manual button */}
           </div>
 
-          {hasSession && (
-            <div className="min-h-0 flex-1 overflow-y-auto space-y-5 text-sm text-neutral-400 modern-scroll">
-              <section aria-labelledby="chat-history-heading">
-                <h2 id="chat-history-heading" className="mb-2 px-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-neutral-500">Chat history</h2>
-                {modeHistories.length === 0 && <p className="px-1">No chats yet</p>}
-                <div className="space-y-1.5">
-                  {modeHistories.slice(0, 6).map((h) => (
-                    <div
-                      key={h.id}
-                      className={`group flex items-center gap-1 rounded-lg border p-1 transition-colors ${
-                        h.id === activeHistoryId
-                          ? "border-sky-400/25 bg-sky-400/[0.08] shadow-[inset_2px_0_0_0_rgba(56,189,248,0.8)]"
-                          : "border-white/[0.06] bg-white/[0.025] hover:border-white/10 hover:bg-white/[0.05]"
-                      }`}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => loadHistory(h.id)}
-                        aria-current={h.id === activeHistoryId ? "page" : undefined}
-                        className="min-w-0 flex-1 px-2 py-1.5 text-left"
+          <div className="min-h-0 flex-1 overflow-y-auto space-y-5 text-sm text-neutral-400 modern-scroll">
+            <section aria-labelledby="chat-history-heading">
+              <h2 id="chat-history-heading" className="mb-2 px-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-neutral-500">Chat history</h2>
+              <button
+                type="button"
+                className="mb-3 w-full rounded-lg bg-white px-4 py-2 font-medium text-black"
+                onClick={() => createNewChat()}
+              >
+                New Chat
+              </button>
+              {hasSession && (
+                <>
+                  {modeHistories.length === 0 && <p className="px-1">No chats yet</p>}
+                  <div className="space-y-1.5">
+                    {modeHistories.slice(0, 6).map((h) => (
+                      <div
+                        key={h.id}
+                        className={`group flex items-center gap-1 rounded-lg border p-1 transition-colors ${
+                          h.id === activeHistoryId
+                            ? "border-sky-400/25 bg-sky-400/[0.08] shadow-[inset_2px_0_0_0_rgba(56,189,248,0.8)]"
+                            : "border-white/[0.06] bg-white/[0.025] hover:border-white/10 hover:bg-white/[0.05]"
+                        }`}
                       >
-                        <span className={`block truncate text-xs ${h.id === activeHistoryId ? "font-medium text-sky-100" : "text-neutral-200 group-hover:text-white"}`}>
-                          {h.title}
-                        </span>
-                        <span className="mt-0.5 block truncate text-[10px] text-neutral-500">
-                          {new Date(h.updatedAt).toLocaleString()}
-                        </span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => deleteHistory(h.id)}
-                        aria-label={`Delete ${h.title}`}
-                        title="Delete chat"
-                        className="mr-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-neutral-500 transition-colors hover:bg-rose-400/10 hover:text-rose-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-400"
-                      >
-                        <X size={14} aria-hidden="true" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </section>
+                        <button
+                          type="button"
+                          onClick={() => loadHistory(h.id)}
+                          aria-current={h.id === activeHistoryId ? "page" : undefined}
+                          className="min-w-0 flex-1 px-2 py-1.5 text-left"
+                        >
+                          <span className={`block truncate text-xs ${h.id === activeHistoryId ? "font-medium text-sky-100" : "text-neutral-200 group-hover:text-white"}`}>
+                            {h.title}
+                          </span>
+                          <span className="mt-0.5 block truncate text-[10px] text-neutral-500">
+                            {new Date(h.updatedAt).toLocaleString()}
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => deleteHistory(h.id)}
+                          aria-label={`Delete ${h.title}`}
+                          title="Delete chat"
+                          className="mr-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-neutral-500 transition-colors hover:bg-rose-400/10 hover:text-rose-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-sky-400"
+                        >
+                          <X size={14} aria-hidden="true" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </section>
 
-            </div>
-          )}
+          </div>
           {/* Profile / user management at bottom */}
           <div className="mt-4 border-t border-neutral-800 pt-3">
             {isAuthLoading ? (
@@ -1759,32 +1768,55 @@ export default function ChatWindow() {
                 </PayPalUpgradeButton>
               )}
               <div className="relative">
-              <button
-                type="button"
-                onClick={() => setIsThemeMenuOpen((open) => !open)}
-                className="rounded-md bg-neutral-800 px-3 py-2 text-sm"
-                aria-label="Change theme"
-                aria-expanded={isThemeMenuOpen}
-              >
-                Theme: {theme[0].toUpperCase() + theme.slice(1)}
-              </button>
-              {isThemeMenuOpen && (
-                <div className="absolute right-0 top-11 z-20 w-36 rounded-lg border border-neutral-700 bg-neutral-900 p-1 shadow-xl">
-                  {(["auto", "dark", "light"] as Theme[]).map((option) => (
-                    <button
-                      key={option}
-                      type="button"
-                      onClick={() => {
-                        setTheme(option);
-                        setIsThemeMenuOpen(false);
-                      }}
-                      className="block w-full rounded px-3 py-2 text-left text-sm capitalize hover:bg-neutral-800"
-                    >
-                      {option}
-                    </button>
-                  ))}
-                </div>
-              )}
+                <button
+                  type="button"
+                  onClick={() => setIsThemeMenuOpen((open) => !open)}
+                  className="flex h-10 w-10 items-center justify-center rounded-full border border-neutral-700 bg-neutral-900/70 text-neutral-300 shadow-sm transition hover:border-neutral-500 hover:bg-neutral-800 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400"
+                  aria-label={`Change theme, currently ${theme}`}
+                  title={`Theme: ${theme}`}
+                  aria-haspopup="menu"
+                  aria-expanded={isThemeMenuOpen}
+                >
+                  {theme === "light" ? (
+                    <Sun size={18} aria-hidden="true" />
+                  ) : theme === "dark" ? (
+                    <Moon size={18} aria-hidden="true" />
+                  ) : (
+                    <Monitor size={18} aria-hidden="true" />
+                  )}
+                </button>
+                {isThemeMenuOpen && (
+                  <div
+                    role="menu"
+                    aria-label="Theme options"
+                    className="absolute right-0 top-12 z-20 w-40 rounded-xl border border-neutral-700 bg-neutral-900/95 p-1.5 shadow-xl backdrop-blur-xl"
+                  >
+                    {(["auto", "dark", "light"] as Theme[]).map((option) => {
+                      const ThemeOptionIcon = option === "light" ? Sun : option === "dark" ? Moon : Monitor;
+                      return (
+                        <button
+                          key={option}
+                          type="button"
+                          onClick={() => {
+                            setTheme(option);
+                            setIsThemeMenuOpen(false);
+                          }}
+                          className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm capitalize transition ${
+                            theme === option
+                              ? "bg-neutral-800 text-white"
+                              : "text-neutral-300 hover:bg-neutral-800"
+                          }`}
+                          role="menuitemradio"
+                          aria-checked={theme === option}
+                        >
+                          <ThemeOptionIcon size={16} aria-hidden="true" />
+                          <span className="flex-1">{option}</span>
+                          {theme === option && <Check size={15} aria-hidden="true" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
           </div>
