@@ -1618,7 +1618,7 @@ export default function ChatWindow() {
               type="button"
               onClick={openGeneratedImageHistory}
               aria-current={isImageHistoryOpen ? "page" : undefined}
-              className={`flex w-full items-center gap-2 rounded-lg px-4 py-2 text-left font-medium transition hover:bg-neutral-800 ${
+              className={`chat-image-history-button flex w-full items-center gap-2 rounded-lg px-4 py-2 text-left font-medium transition hover:bg-neutral-800 ${
                 isImageHistoryOpen ? "bg-neutral-800 text-white" : "text-neutral-300"
               }`}
             >
@@ -1635,7 +1635,7 @@ export default function ChatWindow() {
               <h2 id="chat-history-heading" className="mb-2 px-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-neutral-500">Chat history</h2>
               <button
                 type="button"
-                className="mb-3 w-full rounded-lg bg-white px-4 py-2 font-medium text-black"
+                className="chat-new-button mb-3 w-full rounded-lg bg-white px-4 py-2 font-medium text-black transition-colors hover:bg-neutral-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400"
                 onClick={() => createNewChat()}
               >
                 New Chat
@@ -1771,7 +1771,7 @@ export default function ChatWindow() {
                 <button
                   type="button"
                   onClick={() => setIsThemeMenuOpen((open) => !open)}
-                  className="flex h-10 w-10 items-center justify-center rounded-full border border-neutral-700 bg-neutral-900/70 text-neutral-300 shadow-sm transition hover:border-neutral-500 hover:bg-neutral-800 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400"
+                  className="theme-toggle-button flex h-10 w-10 items-center justify-center rounded-full border border-neutral-700 bg-neutral-900/70 text-neutral-300 shadow-sm transition hover:border-neutral-500 hover:bg-neutral-800 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400"
                   aria-label={`Change theme, currently ${theme}`}
                   title={`Theme: ${theme}`}
                   aria-haspopup="menu"
